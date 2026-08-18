@@ -1,22 +1,18 @@
 import streamlit as st
 import numpy as np
-import pandas as pd
 import matplotlib.pyplot as plt
-
+from matplotlib.patches import Circle
 from sklearn.neighbors import KNeighborsClassifier
-from sklearn.metrics import accuracy_score
-from matplotlib.colors import ListedColormap
 
 
 # ============================================================
-# PAGE CONFIGURATION
+# PAGE CONFIG
 # ============================================================
 
 st.set_page_config(
-    page_title="Interactive KNN Classification",
-    page_icon="🎯",
-    layout="wide",
-    initial_sidebar_state="expanded"
+    page_title="The KNN Detective",
+    page_icon="🔎",
+    layout="wide"
 )
 
 
@@ -24,50 +20,57 @@ st.set_page_config(
 # CUSTOM CSS
 # ============================================================
 
-st.markdown(
-    """
-    <style>
+st.markdown("""
+<style>
 
     .main-title {
-        font-size: 42px;
-        font-weight: 700;
         text-align: center;
-        margin-bottom: 5px;
+        font-size: 42px;
+        font-weight: 800;
+        margin-bottom: 0px;
     }
 
     .subtitle {
         text-align: center;
         font-size: 18px;
-        color: #666666;
-        margin-bottom: 30px;
+        color: #666;
+        margin-bottom: 25px;
     }
 
-    .prediction-box {
+    .step-card {
         padding: 20px;
-        border-radius: 12px;
+        border-radius: 18px;
+        background-color: #f7f7f7;
         text-align: center;
-        font-size: 25px;
-        font-weight: bold;
-        border: 2px solid #444444;
-        margin-top: 10px;
+        margin-bottom: 15px;
     }
 
-    .info-box {
-        padding: 15px;
-        border-radius: 10px;
-        background-color: #f5f5f5;
-        margin-bottom: 10px;
+    .big-number {
+        font-size: 35px;
+        font-weight: 800;
     }
 
-    .small-text {
-        font-size: 14px;
-        color: #666666;
+    .prediction {
+        font-size: 28px;
+        font-weight: 800;
+        text-align: center;
+        padding: 20px;
+        border-radius: 18px;
+        background-color: #f2f2f2;
     }
 
-    </style>
-    """,
-    unsafe_allow_html=True
-)
+    .instruction {
+        font-size: 17px;
+        line-height: 1.6;
+    }
+
+    div.stButton > button {
+        border-radius: 12px;
+        font-weight: 600;
+    }
+
+</style>
+""", unsafe_allow_html=True)
 
 
 # ============================================================
@@ -75,732 +78,727 @@ st.markdown(
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">🎯 Interactive KNN Classification Lab</div>',
+    '<div class="main-title">🔎 The KNN Detective</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
     '<div class="subtitle">'
-    'Explore how K-Nearest Neighbours classifies a new point '
-    'iteration by iteration'
+    'Can you figure out where the new point belongs?'
     '</div>',
     unsafe_allow_html=True
 )
 
 
 # ============================================================
-# CLASS COLOURS
+# SESSION STATE
 # ============================================================
 
-CLASS_COLORS = {
-    0: "#e74c3c",
-    1: "#3498db",
-    2: "#2ecc71",
-    3: "#9b59b6"
-}
+if "points" not in st.session_state:
+    st.session_state.points = None
 
-CLASS_NAMES = {
-    0: "Class A",
-    1: "Class B",
-    2: "Class C",
-    3: "Class D"
-}
+if "labels" not in st.session_state:
+    st.session_state.labels = None
 
-
-# ============================================================
-# SESSION STATE INITIALIZATION
-# ============================================================
-
-if "dataset" not in st.session_state:
-    st.session_state.dataset = None
-
-if "query_point" not in st.session_state:
-    st.session_state.query_point = None
+if "query" not in st.session_state:
+    st.session_state.query = None
 
 if "iteration" not in st.session_state:
-    st.session_state.iteration = 1
+    st.session_state.iteration = 0
 
-if "seed" not in st.session_state:
-    st.session_state.seed = 42
+if "started" not in st.session_state:
+    st.session_state.started = False
 
-if "generated" not in st.session_state:
-    st.session_state.generated = False
+if "classified" not in st.session_state:
+    st.session_state.classified = False
 
 
 # ============================================================
-# DATA GENERATION FUNCTION
+# CONSTANTS
 # ============================================================
 
-def generate_dataset(
-    n_points,
-    n_classes,
-    spread,
-    seed
-):
+X_MIN = 0
+X_MAX = 100
+
+Y_MIN = 0
+Y_MAX = 100
+
+TOTAL_POINTS = 90
+
+# Fixed internally.
+# Students don't need to control this.
+K = 5
+
+# Number of stages before classification
+TOTAL_ITERATIONS = 10
+
+
+# Soft colours suitable for design students
+COLORS = [
+    "#FF6B6B",   # coral
+    "#4D96FF",   # blue
+    "#6BCB77",   # green
+    "#B983FF"    # purple
+]
+
+CLASS_NAMES = [
+    "Coral Group",
+    "Blue Group",
+    "Green Group",
+    "Purple Group"
+]
+
+
+# ============================================================
+# GENERATE INITIAL RANDOM POINTS
+# ============================================================
+
+def create_random_points():
+
+    rng = np.random.default_rng()
+
+    points = rng.uniform(
+        8,
+        92,
+        size=(TOTAL_POINTS, 2)
+    )
+
+    return points
+
+
+# ============================================================
+# CLUSTER FORMATION
+# ============================================================
+
+def create_clustered_positions(points, iteration):
+
     """
-    Generate 2D clustered data.
+    Slowly transform random points into four clusters.
+
+    iteration = 0
+        completely random
+
+    iteration = TOTAL_ITERATIONS
+        strongly clustered
     """
 
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng(1234)
 
-    # Fixed cluster centres
     centres = np.array([
-        [25, 25],
-        [75, 25],
-        [50, 75],
-        [80, 75]
+        [25, 70],
+        [75, 70],
+        [28, 28],
+        [72, 28]
     ])
 
-    points_per_class = n_points // n_classes
-    remainder = n_points % n_classes
+    n = len(points)
 
-    X_list = []
-    y_list = []
+    # Assign each point to one of four eventual groups
+    assignments = np.arange(n) % 4
 
-    for class_id in range(n_classes):
+    rng.shuffle(assignments)
 
-        count = points_per_class
+    # Progress from 0 to 1
+    progress = iteration / TOTAL_ITERATIONS
 
-        if class_id < remainder:
-            count += 1
+    # Smooth transition
+    progress = progress ** 0.8
 
-        centre = centres[class_id]
+    clustered = points.copy()
 
-        points = rng.normal(
-            loc=centre,
-            scale=spread,
-            size=(count, 2)
+    for i in range(n):
+
+        target = centres[assignments[i]]
+
+        clustered[i] = (
+            (1 - progress) * points[i]
+            + progress * target
         )
 
-        # Keep points inside fixed axis range
-        points[:, 0] = np.clip(points[:, 0], 2, 98)
-        points[:, 1] = np.clip(points[:, 1], 2, 98)
-
-        X_list.append(points)
-        y_list.extend([class_id] * count)
-
-    X = np.vstack(X_list)
-    y = np.array(y_list)
-
-    # Shuffle the observations
-    indices = rng.permutation(len(X))
-
-    X = X[indices]
-    y = y[indices]
-
-    return X, y
+    return clustered, assignments
 
 
 # ============================================================
-# QUERY POINT GENERATION
+# CREATE NEW QUERY POINT
 # ============================================================
 
-def generate_query_point(seed=None):
+def create_query_point():
 
-    rng = np.random.default_rng(seed)
+    rng = np.random.default_rng()
 
-    x = rng.uniform(5, 95)
-    y = rng.uniform(5, 95)
-
-    return np.array([x, y])
+    return np.array([
+        rng.uniform(15, 85),
+        rng.uniform(15, 85)
+    ])
 
 
 # ============================================================
-# KNN INFORMATION
+# INITIALIZE EXPERIMENT
 # ============================================================
 
-def get_knn_information(X, y, query, k):
+def initialize_experiment():
 
-    if len(X) == 0:
-        return None
+    st.session_state.points = create_random_points()
 
-    k = min(k, len(X))
+    st.session_state.query = create_query_point()
 
-    distances = np.sqrt(
-        np.sum(
-            (X - query) ** 2,
-            axis=1
-        )
-    )
+    st.session_state.iteration = 0
 
-    nearest_indices = np.argsort(distances)[:k]
+    st.session_state.started = False
 
-    neighbour_classes = y[nearest_indices]
-
-    unique_classes, counts = np.unique(
-        neighbour_classes,
-        return_counts=True
-    )
-
-    winning_class = unique_classes[
-        np.argmax(counts)
-    ]
-
-    return {
-        "distances": distances,
-        "nearest_indices": nearest_indices,
-        "neighbour_classes": neighbour_classes,
-        "winning_class": int(winning_class),
-        "unique_classes": unique_classes,
-        "counts": counts
-    }
+    st.session_state.classified = False
 
 
 # ============================================================
 # SIDEBAR
 # ============================================================
 
-st.sidebar.header("⚙️ Experiment Controls")
+with st.sidebar:
 
-st.sidebar.subheader("Dataset")
+    st.header("🎮 Experiment")
 
-n_points = st.sidebar.slider(
-    "Number of points",
-    min_value=20,
-    max_value=300,
-    value=100,
-    step=10
-)
-
-n_classes = st.sidebar.slider(
-    "Number of classes",
-    min_value=2,
-    max_value=4,
-    value=3,
-    step=1
-)
-
-spread = st.sidebar.slider(
-    "Cluster spread",
-    min_value=2.0,
-    max_value=20.0,
-    value=8.0,
-    step=0.5
-)
-
-seed = st.sidebar.number_input(
-    "Random seed",
-    min_value=0,
-    max_value=9999,
-    value=42,
-    step=1
-)
-
-st.sidebar.subheader("KNN")
-
-k_value = st.sidebar.slider(
-    "K — Number of neighbours",
-    min_value=1,
-    max_value=20,
-    value=5,
-    step=1
-)
-
-
-# ============================================================
-# GENERATE BUTTONS
-# ============================================================
-
-if st.sidebar.button(
-    "🔄 Generate New Dataset",
-    use_container_width=True
-):
-
-    X, y = generate_dataset(
-        n_points=n_points,
-        n_classes=n_classes,
-        spread=spread,
-        seed=seed
+    st.write(
+        "Use the controls below to explore how KNN "
+        "makes a decision."
     )
 
-    st.session_state.dataset = (X, y)
+    st.divider()
 
-    st.session_state.query_point = generate_query_point(
-        seed=seed + 100
+    if st.button(
+        "✨ Create Random Points",
+        use_container_width=True
+    ):
+        initialize_experiment()
+
+    if st.button(
+        "🔄 Start Again",
+        use_container_width=True
+    ):
+        initialize_experiment()
+
+    st.divider()
+
+    st.subheader("How to play")
+
+    st.write(
+        """
+        **1.** Look at the random points.
+
+        **2.** Start the experiment.
+
+        **3.** Move through the iterations.
+
+        **4.** Watch groups emerge.
+
+        **5.** Meet the new point.
+
+        **6.** See how KNN decides where it belongs.
+        """
     )
 
-    st.session_state.iteration = 1
-    st.session_state.generated = True
 
+# ============================================================
+# INITIAL DATA
+# ============================================================
 
-if st.sidebar.button(
-    "🎯 Generate New Query Point",
-    use_container_width=True
-):
+if st.session_state.points is None:
 
-    if st.session_state.dataset is not None:
-
-        st.session_state.query_point = generate_query_point()
-
-        st.session_state.iteration = 1
-
-
-if st.sidebar.button(
-    "↩️ Reset",
-    use_container_width=True
-):
-
-    st.session_state.dataset = None
-    st.session_state.query_point = None
-    st.session_state.iteration = 1
-    st.session_state.generated = False
+    initialize_experiment()
 
 
 # ============================================================
-# INITIAL DATASET
+# CURRENT DATA
 # ============================================================
 
-if st.session_state.dataset is None:
+iteration = st.session_state.iteration
 
-    X, y = generate_dataset(
-        n_points=n_points,
-        n_classes=n_classes,
-        spread=spread,
-        seed=seed
-    )
+points = st.session_state.points
 
-    st.session_state.dataset = (X, y)
-
-    st.session_state.query_point = generate_query_point(
-        seed=seed + 100
-    )
-
-    st.session_state.generated = True
-
-
-X, y = st.session_state.dataset
-
-query_point = st.session_state.query_point
+query = st.session_state.query
 
 
 # ============================================================
-# ITERATION CONTROLS
+# CONTROL BAR
 # ============================================================
 
-st.subheader("⏱️ Iteration Control")
+st.markdown("### 🎬 Watch the points evolve")
 
-max_iteration = len(X)
+control1, control2, control3 = st.columns(
+    [1, 2, 1]
+)
 
-col1, col2, col3 = st.columns([1, 5, 1])
+with control1:
 
-with col1:
-
-    if st.button("⬅️ Previous"):
+    if st.button(
+        "⬅ Previous",
+        use_container_width=True
+    ):
 
         st.session_state.iteration = max(
-            1,
+            0,
             st.session_state.iteration - 1
         )
 
-with col2:
+with control2:
 
-    iteration = st.slider(
-        "Current iteration",
-        min_value=1,
-        max_value=max_iteration,
-        value=st.session_state.iteration,
-        step=1
+    new_iteration = st.slider(
+        "Iteration",
+        min_value=0,
+        max_value=TOTAL_ITERATIONS,
+        value=iteration,
+        step=1,
+        label_visibility="collapsed"
     )
 
-    st.session_state.iteration = iteration
+    st.session_state.iteration = new_iteration
 
-with col3:
+with control3:
 
-    if st.button("Next ➡️"):
+    if st.button(
+        "Next ➡",
+        use_container_width=True
+    ):
 
         st.session_state.iteration = min(
-            max_iteration,
+            TOTAL_ITERATIONS,
             st.session_state.iteration + 1
         )
 
 
-# ============================================================
-# DATA FOR CURRENT ITERATION
-# ============================================================
-
-current_iteration = st.session_state.iteration
-
-X_current = X[:current_iteration]
-y_current = y[:current_iteration]
+iteration = st.session_state.iteration
 
 
 # ============================================================
-# KNN CALCULATION
+# GENERATE CURRENT POSITIONS
 # ============================================================
 
-knn_info = get_knn_information(
-    X_current,
-    y_current,
-    query_point,
-    k_value
+current_points, hidden_labels = create_clustered_positions(
+    points,
+    iteration
 )
 
-nearest_indices = knn_info["nearest_indices"]
-
-winning_class = knn_info["winning_class"]
-
-nearest_distances = knn_info["distances"][
-    nearest_indices
-]
-
 
 # ============================================================
-# MAIN LAYOUT
+# DETERMINE WHETHER QUERY SHOULD APPEAR
 # ============================================================
 
-plot_col, info_col = st.columns(
-    [2.2, 1]
+show_query = (
+    iteration >= TOTAL_ITERATIONS
 )
+
+
+# ============================================================
+# KNN CLASSIFICATION
+# ============================================================
+
+prediction = None
+nearest_indices = []
+
+if show_query:
+
+    model = KNeighborsClassifier(
+        n_neighbors=K
+    )
+
+    model.fit(
+        current_points,
+        hidden_labels
+    )
+
+    prediction = int(
+        model.predict(
+            query.reshape(1, -1)
+        )[0]
+    )
+
+    distances = np.sqrt(
+        np.sum(
+            (current_points - query) ** 2,
+            axis=1
+        )
+    )
+
+    nearest_indices = np.argsort(
+        distances
+    )[:K]
 
 
 # ============================================================
 # PLOT
 # ============================================================
 
-with plot_col:
+fig, ax = plt.subplots(
+    figsize=(9, 7)
+)
 
-    st.subheader(
-        f"📊 Dataset — Iteration {current_iteration}"
+# ------------------------------------------------------------
+# Draw points
+# ------------------------------------------------------------
+
+if iteration == 0:
+
+    # ALL RANDOM POINTS LOOK THE SAME
+    ax.scatter(
+        current_points[:, 0],
+        current_points[:, 1],
+        s=90,
+        color="#777777",
+        alpha=0.85,
+        edgecolors="white",
+        linewidths=1
     )
 
-    fig, ax = plt.subplots(
-        figsize=(9, 7)
-    )
+else:
 
-    # --------------------------------------------------------
-    # Decision regions
-    # --------------------------------------------------------
+    # Once clustering starts, reveal colours
+    for class_id in range(4):
 
-    if current_iteration >= max(3, k_value):
+        mask = hidden_labels == class_id
 
-        xx, yy = np.meshgrid(
-            np.linspace(0, 100, 150),
-            np.linspace(0, 100, 150)
+        ax.scatter(
+            current_points[mask, 0],
+            current_points[mask, 1],
+            s=90,
+            color=COLORS[class_id],
+            alpha=0.85,
+            edgecolors="white",
+            linewidths=1,
+            label=CLASS_NAMES[class_id]
         )
 
-        grid_points = np.c_[
-            xx.ravel(),
-            yy.ravel()
-        ]
 
-        model = KNeighborsClassifier(
-            n_neighbors=min(
-                k_value,
-                len(X_current)
-            )
-        )
+# ------------------------------------------------------------
+# Query point
+# ------------------------------------------------------------
 
-        model.fit(
-            X_current,
-            y_current
-        )
+if show_query:
 
-        predictions = model.predict(
-            grid_points
-        )
-
-        predictions = predictions.reshape(
-            xx.shape
-        )
-
-        cmap = ListedColormap(
-            [
-                "#fde2e2",
-                "#dceeff",
-                "#ddf7e4",
-                "#eee0f7"
-            ][:n_classes]
-        )
-
-        ax.contourf(
-            xx,
-            yy,
-            predictions,
-            alpha=0.35,
-            cmap=cmap
-        )
-
-    # --------------------------------------------------------
-    # Plot all current points
-    # --------------------------------------------------------
-
-    for class_id in range(n_classes):
-
-        mask = y_current == class_id
-
-        if np.any(mask):
-
-            ax.scatter(
-                X_current[mask, 0],
-                X_current[mask, 1],
-                s=65,
-                alpha=0.85,
-                color=CLASS_COLORS[class_id],
-                label=CLASS_NAMES[class_id],
-                edgecolors="white",
-                linewidths=0.8
-            )
-
-    # --------------------------------------------------------
-    # Highlight nearest neighbours
-    # --------------------------------------------------------
-
+    # Draw lines to nearest neighbours
     for idx in nearest_indices:
-
-        neighbour = X_current[idx]
 
         ax.plot(
             [
-                query_point[0],
-                neighbour[0]
+                query[0],
+                current_points[idx, 0]
             ],
             [
-                query_point[1],
-                neighbour[1]
+                query[1],
+                current_points[idx, 1]
             ],
+            color="#333333",
             linestyle="--",
-            linewidth=1.2,
-            color="black",
-            alpha=0.6
+            linewidth=1.5,
+            alpha=0.55
         )
 
+        # Highlight neighbour
         ax.scatter(
-            neighbour[0],
-            neighbour[1],
-            s=180,
+            current_points[idx, 0],
+            current_points[idx, 1],
+            s=230,
             facecolors="none",
-            edgecolors="black",
-            linewidths=2
+            edgecolors="#222222",
+            linewidths=2.5
         )
 
-    # --------------------------------------------------------
     # Query point
-    # --------------------------------------------------------
-
     ax.scatter(
-        query_point[0],
-        query_point[1],
-        s=300,
+        query[0],
+        query[1],
+        s=500,
         marker="*",
-        color="black",
+        color="#111111",
         edgecolors="white",
-        linewidths=1.5,
-        zorder=10,
-        label="New / Query Point"
+        linewidths=2,
+        zorder=10
     )
 
-    # --------------------------------------------------------
-    # Axes
-    # --------------------------------------------------------
-
-    ax.set_xlim(0, 100)
-    ax.set_ylim(0, 100)
-
-    ax.set_xlabel(
-        "X axis",
-        fontsize=12
-    )
-
-    ax.set_ylabel(
-        "Y axis",
-        fontsize=12
-    )
-
-    ax.set_title(
-        f"KNN Classification | K = {k_value}",
-        fontsize=16,
+    ax.annotate(
+        "NEW POINT",
+        xy=(query[0], query[1]),
+        xytext=(10, 15),
+        textcoords="offset points",
+        fontsize=12,
         fontweight="bold"
     )
 
-    ax.grid(
-        alpha=0.2
-    )
+
+# ------------------------------------------------------------
+# Axis
+# ------------------------------------------------------------
+
+ax.set_xlim(
+    X_MIN,
+    X_MAX
+)
+
+ax.set_ylim(
+    Y_MIN,
+    Y_MAX
+)
+
+ax.set_xlabel(
+    "X",
+    fontsize=13
+)
+
+ax.set_ylabel(
+    "Y",
+    fontsize=13
+)
+
+ax.grid(
+    alpha=0.15
+)
+
+ax.set_title(
+    f"Iteration {iteration} / {TOTAL_ITERATIONS}",
+    fontsize=18,
+    fontweight="bold"
+)
+
+if iteration > 0:
 
     ax.legend(
-        loc="upper right"
+        loc="upper right",
+        frameon=True
     )
 
-    st.pyplot(
-        fig,
-        use_container_width=True
-    )
+st.pyplot(
+    fig,
+    use_container_width=True
+)
 
-    plt.close(fig)
+plt.close(fig)
 
 
 # ============================================================
-# INFORMATION PANEL
+# STATUS MESSAGE
 # ============================================================
 
-with info_col:
+if iteration == 0:
 
-    st.subheader("🔎 Current Result")
-
-    st.metric(
-        "Current iteration",
-        f"{current_iteration} / {max_iteration}"
+    st.info(
+        "👀 Look carefully! These points are completely random. "
+        "There are no groups yet."
     )
 
-    st.metric(
-        "Training points",
-        current_iteration
+elif iteration < 3:
+
+    st.info(
+        "🌱 Something is beginning to happen... "
+        "The points are starting to move towards groups."
     )
 
-    st.metric(
-        "K",
-        k_value
+elif iteration < 6:
+
+    st.info(
+        "🧩 The groups are becoming easier to recognize."
     )
 
-    st.write("### 🎯 Query Point")
+elif iteration < TOTAL_ITERATIONS:
 
-    st.write(
-        f"X = **{query_point[0]:.2f}**"
+    st.info(
+        "🎨 The clusters are becoming clearer. "
+        "Can you predict where the next point might belong?"
     )
 
-    st.write(
-        f"Y = **{query_point[1]:.2f}**"
+else:
+
+    st.success(
+        "✨ The groups have formed! Now let's introduce a new point."
     )
+
+
+# ============================================================
+# CLASSIFICATION SECTION
+# ============================================================
+
+if show_query:
 
     st.divider()
 
-    st.write("### 🗳️ Neighbour Voting")
-
-    vote_data = pd.DataFrame({
-        "Class": [
-            CLASS_NAMES[int(c)]
-            for c in knn_info["unique_classes"]
-        ],
-        "Votes": knn_info["counts"]
-    })
-
-    st.dataframe(
-        vote_data,
-        hide_index=True,
-        use_container_width=True
+    st.markdown(
+        "## ⭐ Meet the new point"
     )
 
-    st.divider()
+    st.write(
+        """
+        A completely new point has appeared.
 
-    st.write("### 🏆 Prediction")
+        It doesn't have a class yet.
+
+        **Can KNN figure out where it belongs?**
+        """
+    )
+
+    col1, col2, col3 = st.columns(3)
+
+    with col1:
+
+        st.metric(
+            "Nearby points considered",
+            K
+        )
+
+    with col2:
+
+        st.metric(
+            "Question",
+            "Where does ★ belong?"
+        )
+
+    with col3:
+
+        st.metric(
+            "KNN's answer",
+            CLASS_NAMES[prediction]
+        )
 
     st.markdown(
         f"""
-        <div class="prediction-box">
-            {CLASS_NAMES[winning_class]}
+        <div class="prediction">
+        🔎 KNN thinks the new point belongs to<br><br>
+        {CLASS_NAMES[prediction]}
         </div>
         """,
         unsafe_allow_html=True
     )
 
+    st.divider()
+
+    st.markdown(
+        "### 🗳️ Why?"
+
+    )
+
+    votes = hidden_labels[
+        nearest_indices
+    ]
+
+    vote_counts = np.bincount(
+        votes,
+        minlength=4
+    )
+
+    vote_cols = st.columns(4)
+
+    for i in range(4):
+
+        with vote_cols[i]:
+
+            st.markdown(
+                f"""
+                <div class="step-card">
+
+                <div style="
+                    font-size:22px;
+                    color:{COLORS[i]};
+                    font-weight:700;
+                ">
+                {CLASS_NAMES[i]}
+                </div>
+
+                <div class="big-number">
+                {vote_counts[i]}
+                </div>
+
+                votes
+
+                </div>
+                """,
+                unsafe_allow_html=True
+            )
+
+    st.write(
+        f"""
+        KNN looks at the **{K} closest points**.
+
+        The group with the most nearby points wins.
+
+        In this case:
+
+        **{CLASS_NAMES[prediction]} wins! 🎉**
+        """
+    )
+
 
 # ============================================================
-# NEIGHBOUR DETAILS
+# TEACHING SECTION
 # ============================================================
 
 st.divider()
-
-st.subheader("📍 K Nearest Neighbours")
-
-neighbour_rows = []
-
-for rank, idx in enumerate(
-    nearest_indices,
-    start=1
-):
-
-    neighbour_rows.append({
-        "Rank": rank,
-        "Class": CLASS_NAMES[int(y_current[idx])],
-        "X": round(float(X_current[idx, 0]), 2),
-        "Y": round(float(X_current[idx, 1]), 2),
-        "Distance": round(
-            float(nearest_distances[rank - 1]),
-            3
-        )
-    })
-
-neighbour_df = pd.DataFrame(
-    neighbour_rows
-)
-
-st.dataframe(
-    neighbour_df,
-    hide_index=True,
-    use_container_width=True
-)
-
-
-# ============================================================
-# EXPLANATION
-# ============================================================
-
-st.divider()
-
-st.subheader("🧠 How did KNN make this decision?")
 
 st.markdown(
-    f"""
-    **Step 1 — Find the neighbours**
-
-    The algorithm calculates the distance between the query point
-    and every training point.
-
-    **Step 2 — Select K neighbours**
-
-    The closest **{k_value}** points are selected.
-
-    **Step 3 — Voting**
-
-    Each neighbour votes for its class.
-
-    **Step 4 — Majority rule**
-
-    The class receiving the largest number of votes becomes the
-    predicted class.
-
-    ### Current prediction
-
-    **{CLASS_NAMES[winning_class]}**
-
-    This means that among the selected nearest neighbours,
-    **{CLASS_NAMES[winning_class]}** received the highest number
-    of votes.
-    """
+    "## 💡 What just happened?"
 )
 
+step1, step2, step3, step4 = st.columns(4)
 
-# ============================================================
-# EDUCATIONAL NOTE
-# ============================================================
-
-with st.expander(
-    "📚 What should you observe while changing the iteration?"
-):
+with step1:
 
     st.markdown(
         """
-        ### Try this experiment
+        ### ① Random
 
-        1. Keep **K = 3**.
-        2. Start from **Iteration 1**.
-        3. Slowly move the iteration slider.
-        4. Observe how the points gradually appear.
-        5. Watch the KNN decision regions change.
-        6. Observe which neighbours influence the query point.
-        7. Increase K to **5, 7, 11**.
-        8. Generate another query point.
-        9. Compare the predictions.
+        At the beginning, the points were completely random.
 
-        ### Important observation
+        No groups.
+        No classes.
+        """
+    )
 
-        A small value of **K** makes the classifier more sensitive
-        to nearby individual points.
+with step2:
 
-        A larger value of **K** considers a larger neighbourhood
-        and generally produces smoother decision regions.
+    st.markdown(
+        """
+        ### ② Formation
 
-        This demonstrates the fundamental **bias–variance trade-off**
-        in KNN.
+        As the iterations progressed, nearby points began forming groups.
+        """
+    )
+
+with step3:
+
+    st.markdown(
+        """
+        ### ③ New point
+
+        A new point appeared without a class.
+        """
+    )
+
+with step4:
+
+    st.markdown(
+        """
+        ### ④ Voting
+
+        KNN looked at nearby points and used majority voting to decide.
+        """
+    )
+
+
+# ============================================================
+# FUN QUESTION
+# ============================================================
+
+if show_query:
+
+    st.divider()
+
+    st.markdown(
+        "### 🤔 Your turn to think"
+    )
+
+    st.write(
+        """
+        Before clicking **Start Again**, look at the clusters.
+
+        If another point appeared near the boundary between two groups,
+        would you be confident about its class?
+
+        **That's where KNN becomes interesting!**
         """
     )
 
@@ -813,9 +811,12 @@ st.divider()
 
 st.markdown(
     """
-    <div style="text-align:center; color:#777;">
-        🎯 Interactive KNN Classification Lab |
-        Built with Streamlit & Python
+    <div style="
+        text-align:center;
+        color:#888;
+        padding:15px;
+    ">
+        🔎 The KNN Detective · An interactive machine-learning experiment
     </div>
     """,
     unsafe_allow_html=True
