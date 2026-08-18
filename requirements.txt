@@ -1,5 +1,3 @@
 streamlit
 numpy
-matplotlib
-pillow
-git+https://github.com/bowespublishing/streamlit-drawable-canvas.git
+plotly
