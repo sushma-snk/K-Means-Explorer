@@ -1,18 +1,17 @@
 import streamlit as st
 import numpy as np
 import matplotlib.pyplot as plt
-from matplotlib.patches import Circle
-from sklearn.neighbors import KNeighborsClassifier
 
 
 # ============================================================
-# PAGE CONFIG
+# PAGE CONFIGURATION
 # ============================================================
 
 st.set_page_config(
-    page_title="The KNN Detective",
-    page_icon="🔎",
-    layout="wide"
+    page_title="K-Means Explorer",
+    page_icon="🎨",
+    layout="wide",
+    initial_sidebar_state="expanded"
 )
 
 
@@ -20,57 +19,83 @@ st.set_page_config(
 # CUSTOM CSS
 # ============================================================
 
-st.markdown("""
-<style>
+st.markdown(
+    """
+    <style>
 
-    .main-title {
+    /* Remove excessive Streamlit spacing */
+    .block-container {
+        padding-top: 1rem;
+        padding-bottom: 0.5rem;
+        max-width: 1500px;
+    }
+
+    /* Main title */
+    .title {
         text-align: center;
-        font-size: 42px;
+        font-size: 34px;
         font-weight: 800;
         margin-bottom: 0px;
     }
 
     .subtitle {
         text-align: center;
-        font-size: 18px;
+        font-size: 15px;
         color: #666;
-        margin-bottom: 25px;
+        margin-bottom: 10px;
     }
 
-    .step-card {
-        padding: 20px;
-        border-radius: 18px;
-        background-color: #f7f7f7;
+    /* Cards */
+    .card {
+        padding: 12px;
+        border-radius: 14px;
+        background-color: #f6f6f6;
         text-align: center;
-        margin-bottom: 15px;
+        margin-bottom: 8px;
     }
 
-    .big-number {
-        font-size: 35px;
-        font-weight: 800;
+    .card-title {
+        font-size: 13px;
+        color: #666;
+        margin-bottom: 2px;
     }
 
-    .prediction {
-        font-size: 28px;
-        font-weight: 800;
+    .card-value {
+        font-size: 24px;
+        font-weight: 700;
+    }
+
+    /* Iteration display */
+    .iteration-box {
         text-align: center;
-        padding: 20px;
-        border-radius: 18px;
-        background-color: #f2f2f2;
-    }
-
-    .instruction {
-        font-size: 17px;
-        line-height: 1.6;
-    }
-
-    div.stButton > button {
+        font-size: 20px;
+        font-weight: 700;
+        padding: 8px;
         border-radius: 12px;
+        background-color: #f4f4f4;
+    }
+
+    /* Explanation */
+    .explanation {
+        font-size: 14px;
+        line-height: 1.4;
+    }
+
+    /* Buttons */
+    div.stButton > button {
+        border-radius: 10px;
         font-weight: 600;
     }
 
-</style>
-""", unsafe_allow_html=True)
+    /* Sidebar */
+    section[data-testid="stSidebar"] {
+        width: 270px !important;
+    }
+
+    </style>
+    """,
+    unsafe_allow_html=True
+)
 
 
 # ============================================================
@@ -78,39 +103,16 @@ st.markdown("""
 # ============================================================
 
 st.markdown(
-    '<div class="main-title">🔎 The KNN Detective</div>',
+    '<div class="title">🎨 K-Means Explorer</div>',
     unsafe_allow_html=True
 )
 
 st.markdown(
     '<div class="subtitle">'
-    'Can you figure out where the new point belongs?'
+    'Watch random points discover their own groups'
     '</div>',
     unsafe_allow_html=True
 )
-
-
-# ============================================================
-# SESSION STATE
-# ============================================================
-
-if "points" not in st.session_state:
-    st.session_state.points = None
-
-if "labels" not in st.session_state:
-    st.session_state.labels = None
-
-if "query" not in st.session_state:
-    st.session_state.query = None
-
-if "iteration" not in st.session_state:
-    st.session_state.iteration = 0
-
-if "started" not in st.session_state:
-    st.session_state.started = False
-
-if "classified" not in st.session_state:
-    st.session_state.classified = False
 
 
 # ============================================================
@@ -123,130 +125,252 @@ X_MAX = 100
 Y_MIN = 0
 Y_MAX = 100
 
-TOTAL_POINTS = 90
-
-# Fixed internally.
-# Students don't need to control this.
-K = 5
-
-# Number of stages before classification
-TOTAL_ITERATIONS = 10
+MAX_ITERATIONS = 20
 
 
-# Soft colours suitable for design students
-COLORS = [
-    "#FF6B6B",   # coral
-    "#4D96FF",   # blue
-    "#6BCB77",   # green
-    "#B983FF"    # purple
+# Visually distinct colours
+CLUSTER_COLORS = [
+    "#FF6B6B",  # red/coral
+    "#4D96FF",  # blue
+    "#6BCB77",  # green
+    "#B983FF",  # purple
+    "#FFB84C",  # orange
+    "#00B8A9",  # teal
 ]
 
-CLASS_NAMES = [
-    "Coral Group",
-    "Blue Group",
-    "Green Group",
-    "Purple Group"
+CLUSTER_NAMES = [
+    "Group 1",
+    "Group 2",
+    "Group 3",
+    "Group 4",
+    "Group 5",
+    "Group 6"
 ]
 
 
 # ============================================================
-# GENERATE INITIAL RANDOM POINTS
+# SESSION STATE
 # ============================================================
 
-def create_random_points():
+if "points" not in st.session_state:
+    st.session_state.points = None
 
-    rng = np.random.default_rng()
+if "n_points" not in st.session_state:
+    st.session_state.n_points = 100
 
-    points = rng.uniform(
-        8,
-        92,
-        size=(TOTAL_POINTS, 2)
+if "n_clusters" not in st.session_state:
+    st.session_state.n_clusters = 3
+
+if "iteration" not in st.session_state:
+    st.session_state.iteration = 0
+
+if "centroid_history" not in st.session_state:
+    st.session_state.centroid_history = None
+
+if "label_history" not in st.session_state:
+    st.session_state.label_history = None
+
+if "generated" not in st.session_state:
+    st.session_state.generated = False
+
+
+# ============================================================
+# RANDOM DATA GENERATION
+# ============================================================
+
+def generate_points(n_points):
+
+    """
+    Generate completely random points.
+
+    Important:
+    At iteration 0, ALL points look identical.
+    No cluster information is shown.
+    """
+
+    return np.random.uniform(
+        5,
+        95,
+        size=(n_points, 2)
     )
 
-    return points
+
+# ============================================================
+# INITIAL CENTROIDS
+# ============================================================
+
+def initialize_centroids(points, n_clusters):
+
+    """
+    Select initial centroids randomly from the dataset.
+    """
+
+    indices = np.random.choice(
+        len(points),
+        size=n_clusters,
+        replace=False
+    )
+
+    return points[indices].copy()
 
 
 # ============================================================
-# CLUSTER FORMATION
+# ASSIGN POINTS TO CENTROIDS
 # ============================================================
 
-def create_clustered_positions(points, iteration):
+def assign_clusters(points, centroids):
+
+    distances = np.sqrt(
+        (
+            points[:, np.newaxis, :]
+            - centroids[np.newaxis, :, :]
+        ) ** 2
+    ).sum(axis=2)
+
+    return np.argmin(
+        distances,
+        axis=1
+    )
+
+
+# ============================================================
+# UPDATE CENTROIDS
+# ============================================================
+
+def update_centroids(
+    points,
+    labels,
+    centroids
+):
+
+    new_centroids = centroids.copy()
+
+    for cluster_id in range(
+        len(centroids)
+    ):
+
+        members = points[
+            labels == cluster_id
+        ]
+
+        if len(members) > 0:
+
+            new_centroids[
+                cluster_id
+            ] = members.mean(
+                axis=0
+            )
+
+    return new_centroids
+
+
+# ============================================================
+# RUN K-MEANS AND SAVE EVERY ITERATION
+# ============================================================
+
+def run_kmeans(
+    points,
+    n_clusters,
+    max_iterations=20
+):
 
     """
-    Slowly transform random points into four clusters.
+    Run K-means once and store:
 
-    iteration = 0
-        completely random
+        centroid position
+        cluster assignment
 
-    iteration = TOTAL_ITERATIONS
-        strongly clustered
+    for every iteration.
+
+    This allows the slider to move backward
+    and forward without recalculating.
     """
 
-    rng = np.random.default_rng(1234)
+    centroids = initialize_centroids(
+        points,
+        n_clusters
+    )
 
-    centres = np.array([
-        [25, 70],
-        [75, 70],
-        [28, 28],
-        [72, 28]
-    ])
+    centroid_history = [
+        centroids.copy()
+    ]
 
-    n = len(points)
+    label_history = []
 
-    # Assign each point to one of four eventual groups
-    assignments = np.arange(n) % 4
+    for _ in range(
+        max_iterations
+    ):
 
-    rng.shuffle(assignments)
-
-    # Progress from 0 to 1
-    progress = iteration / TOTAL_ITERATIONS
-
-    # Smooth transition
-    progress = progress ** 0.8
-
-    clustered = points.copy()
-
-    for i in range(n):
-
-        target = centres[assignments[i]]
-
-        clustered[i] = (
-            (1 - progress) * points[i]
-            + progress * target
+        # Step 1:
+        # Assign points to nearest centroid
+        labels = assign_clusters(
+            points,
+            centroids
         )
 
-    return clustered, assignments
+        label_history.append(
+            labels.copy()
+        )
+
+        # Step 2:
+        # Move centroid to mean of its points
+        new_centroids = update_centroids(
+            points,
+            labels,
+            centroids
+        )
+
+        centroid_history.append(
+            new_centroids.copy()
+        )
+
+        centroids = new_centroids
+
+    return (
+        centroid_history,
+        label_history
+    )
 
 
 # ============================================================
-# CREATE NEW QUERY POINT
+# CREATE EXPERIMENT
 # ============================================================
 
-def create_query_point():
+def create_experiment(
+    n_points,
+    n_clusters
+):
 
-    rng = np.random.default_rng()
+    points = generate_points(
+        n_points
+    )
 
-    return np.array([
-        rng.uniform(15, 85),
-        rng.uniform(15, 85)
-    ])
+    (
+        centroid_history,
+        label_history
+    ) = run_kmeans(
+        points,
+        n_clusters,
+        MAX_ITERATIONS
+    )
 
+    st.session_state.points = points
 
-# ============================================================
-# INITIALIZE EXPERIMENT
-# ============================================================
+    st.session_state.n_points = n_points
 
-def initialize_experiment():
+    st.session_state.n_clusters = n_clusters
 
-    st.session_state.points = create_random_points()
+    st.session_state.centroid_history = (
+        centroid_history
+    )
 
-    st.session_state.query = create_query_point()
+    st.session_state.label_history = (
+        label_history
+    )
 
     st.session_state.iteration = 0
 
-    st.session_state.started = False
-
-    st.session_state.classified = False
+    st.session_state.generated = True
 
 
 # ============================================================
@@ -255,496 +379,569 @@ def initialize_experiment():
 
 with st.sidebar:
 
-    st.header("🎮 Experiment")
+    st.markdown("## 🎮 Experiment")
 
-    st.write(
-        "Use the controls below to explore how KNN "
-        "makes a decision."
+    st.caption(
+        "Create your own K-means experiment."
     )
 
     st.divider()
 
-    if st.button(
-        "✨ Create Random Points",
-        use_container_width=True
-    ):
-        initialize_experiment()
+    # --------------------------------------------------------
+    # NUMBER OF POINTS
+    # --------------------------------------------------------
 
-    if st.button(
-        "🔄 Start Again",
-        use_container_width=True
-    ):
-        initialize_experiment()
+    st.markdown("### 🔵 Data points")
+
+    n_points = st.number_input(
+        "Enter number of points",
+        min_value=20,
+        max_value=300,
+        value=st.session_state.n_points,
+        step=10
+    )
+
+    n_points_slider = st.slider(
+        "Or use the slider",
+        min_value=20,
+        max_value=300,
+        value=int(n_points),
+        step=10
+    )
+
+    # Use slider value
+    n_points = n_points_slider
+
+    # --------------------------------------------------------
+    # NUMBER OF CLUSTERS
+    # --------------------------------------------------------
+
+    st.markdown("### 🎨 Number of clusters")
+
+    n_clusters = st.number_input(
+        "Enter number of clusters",
+        min_value=2,
+        max_value=6,
+        value=st.session_state.n_clusters,
+        step=1
+    )
+
+    n_clusters_slider = st.slider(
+        "Or use the slider",
+        min_value=2,
+        max_value=6,
+        value=int(n_clusters),
+        step=1
+    )
+
+    n_clusters = n_clusters_slider
 
     st.divider()
 
-    st.subheader("How to play")
+    # --------------------------------------------------------
+    # GENERATE
+    # --------------------------------------------------------
 
-    st.write(
+    if st.button(
+        "✨ Generate Points & Start",
+        use_container_width=True
+    ):
+
+        create_experiment(
+            n_points,
+            n_clusters
+        )
+
+    # --------------------------------------------------------
+    # RESET
+    # --------------------------------------------------------
+
+    if st.button(
+        "🔄 New Experiment",
+        use_container_width=True
+    ):
+
+        create_experiment(
+            n_points,
+            n_clusters
+        )
+
+    st.divider()
+
+    st.markdown("### 💡 Try this")
+
+    st.caption(
         """
-        **1.** Look at the random points.
+        Change the number of points and clusters,
+        then watch how the centroids move.
 
-        **2.** Start the experiment.
-
-        **3.** Move through the iterations.
-
-        **4.** Watch groups emerge.
-
-        **5.** Meet the new point.
-
-        **6.** See how KNN decides where it belongs.
+        Can you guess where the final clusters
+        will form before reaching iteration 20?
         """
     )
 
 
 # ============================================================
-# INITIAL DATA
+# FIRST RUN
 # ============================================================
 
-if st.session_state.points is None:
+if not st.session_state.generated:
 
-    initialize_experiment()
+    create_experiment(
+        st.session_state.n_points,
+        st.session_state.n_clusters
+    )
+
+
+# ============================================================
+# LOAD CURRENT EXPERIMENT
+# ============================================================
+
+points = st.session_state.points
+
+n_points = st.session_state.n_points
+
+n_clusters = st.session_state.n_clusters
+
+iteration = st.session_state.iteration
+
+centroid_history = (
+    st.session_state.centroid_history
+)
+
+label_history = (
+    st.session_state.label_history
+)
+
+
+# ============================================================
+# ITERATION CONTROL
+# ============================================================
+
+st.markdown(
+    '<div class="iteration-box">'
+    f'ITERATION {iteration} / {MAX_ITERATIONS}'
+    '</div>',
+    unsafe_allow_html=True
+)
+
+control1, control2, control3 = st.columns(
+    [1, 6, 1]
+)
+
+
+# Previous
+with control1:
+
+    if st.button(
+        "◀",
+        use_container_width=True
+    ):
+
+        st.session_state.iteration = max(
+            0,
+            iteration - 1
+        )
+
+        st.rerun()
+
+
+# Slider
+with control2:
+
+    selected_iteration = st.slider(
+        "Iteration",
+        min_value=0,
+        max_value=MAX_ITERATIONS,
+        value=iteration,
+        step=1,
+        label_visibility="collapsed"
+    )
+
+    if selected_iteration != iteration:
+
+        st.session_state.iteration = (
+            selected_iteration
+        )
+
+        st.rerun()
+
+
+# Next
+with control3:
+
+    if st.button(
+        "▶",
+        use_container_width=True
+    ):
+
+        st.session_state.iteration = min(
+            MAX_ITERATIONS,
+            iteration + 1
+        )
+
+        st.rerun()
+
+
+iteration = st.session_state.iteration
 
 
 # ============================================================
 # CURRENT DATA
 # ============================================================
 
-iteration = st.session_state.iteration
-
-points = st.session_state.points
-
-query = st.session_state.query
-
-
-# ============================================================
-# CONTROL BAR
-# ============================================================
-
-st.markdown("### 🎬 Watch the points evolve")
-
-control1, control2, control3 = st.columns(
-    [1, 2, 1]
-)
-
-with control1:
-
-    if st.button(
-        "⬅ Previous",
-        use_container_width=True
-    ):
-
-        st.session_state.iteration = max(
-            0,
-            st.session_state.iteration - 1
-        )
-
-with control2:
-
-    new_iteration = st.slider(
-        "Iteration",
-        min_value=0,
-        max_value=TOTAL_ITERATIONS,
-        value=iteration,
-        step=1,
-        label_visibility="collapsed"
-    )
-
-    st.session_state.iteration = new_iteration
-
-with control3:
-
-    if st.button(
-        "Next ➡",
-        use_container_width=True
-    ):
-
-        st.session_state.iteration = min(
-            TOTAL_ITERATIONS,
-            st.session_state.iteration + 1
-        )
-
-
-iteration = st.session_state.iteration
-
-
-# ============================================================
-# GENERATE CURRENT POSITIONS
-# ============================================================
-
-current_points, hidden_labels = create_clustered_positions(
-    points,
-    iteration
-)
-
-
-# ============================================================
-# DETERMINE WHETHER QUERY SHOULD APPEAR
-# ============================================================
-
-show_query = (
-    iteration >= TOTAL_ITERATIONS
-)
-
-
-# ============================================================
-# KNN CLASSIFICATION
-# ============================================================
-
-prediction = None
-nearest_indices = []
-
-if show_query:
-
-    model = KNeighborsClassifier(
-        n_neighbors=K
-    )
-
-    model.fit(
-        current_points,
-        hidden_labels
-    )
-
-    prediction = int(
-        model.predict(
-            query.reshape(1, -1)
-        )[0]
-    )
-
-    distances = np.sqrt(
-        np.sum(
-            (current_points - query) ** 2,
-            axis=1
-        )
-    )
-
-    nearest_indices = np.argsort(
-        distances
-    )[:K]
-
-
-# ============================================================
-# PLOT
-# ============================================================
-
-fig, ax = plt.subplots(
-    figsize=(5, 3)
-)
-
-# ------------------------------------------------------------
-# Draw points
-# ------------------------------------------------------------
-
 if iteration == 0:
 
-    # ALL RANDOM POINTS LOOK THE SAME
-    ax.scatter(
-        current_points[:, 0],
-        current_points[:, 1],
-        s=90,
-        color="#777777",
-        alpha=0.85,
-        edgecolors="white",
-        linewidths=1
-    )
+    # No classes yet
+    current_labels = None
+
+    current_centroids = centroid_history[0]
 
 else:
 
-    # Once clustering starts, reveal colours
-    for class_id in range(4):
-
-        mask = hidden_labels == class_id
-
-        ax.scatter(
-            current_points[mask, 0],
-            current_points[mask, 1],
-            s=90,
-            color=COLORS[class_id],
-            alpha=0.85,
-            edgecolors="white",
-            linewidths=1,
-            label=CLASS_NAMES[class_id]
-        )
-
-
-# ------------------------------------------------------------
-# Query point
-# ------------------------------------------------------------
-
-if show_query:
-
-    # Draw lines to nearest neighbours
-    for idx in nearest_indices:
-
-        ax.plot(
-            [
-                query[0],
-                current_points[idx, 0]
-            ],
-            [
-                query[1],
-                current_points[idx, 1]
-            ],
-            color="#333333",
-            linestyle="--",
-            linewidth=1.5,
-            alpha=0.55
-        )
-
-        # Highlight neighbour
-        ax.scatter(
-            current_points[idx, 0],
-            current_points[idx, 1],
-            s=230,
-            facecolors="none",
-            edgecolors="#222222",
-            linewidths=2.5
-        )
-
-    # Query point
-    ax.scatter(
-        query[0],
-        query[1],
-        s=500,
-        marker="*",
-        color="#111111",
-        edgecolors="white",
-        linewidths=2,
-        zorder=10
-    )
-
-    ax.annotate(
-        "NEW POINT",
-        xy=(query[0], query[1]),
-        xytext=(10, 15),
-        textcoords="offset points",
-        fontsize=12,
-        fontweight="bold"
-    )
-
-
-# ------------------------------------------------------------
-# Axis
-# ------------------------------------------------------------
-
-ax.set_xlim(
-    X_MIN,
-    X_MAX
-)
-
-ax.set_ylim(
-    Y_MIN,
-    Y_MAX
-)
-
-ax.set_xlabel(
-    "X",
-    fontsize=13
-)
-
-ax.set_ylabel(
-    "Y",
-    fontsize=13
-)
-
-ax.grid(
-    alpha=0.15
-)
-
-ax.set_title(
-    f"Iteration {iteration} / {TOTAL_ITERATIONS}",
-    fontsize=18,
-    fontweight="bold"
-)
-
-if iteration > 0:
-
-    ax.legend(
-        loc="upper right",
-        frameon=True
-    )
-
-st.pyplot(
-    fig,
-    use_container_width=True
-)
-
-plt.close(fig)
-
-
-# ============================================================
-# STATUS MESSAGE
-# ============================================================
-
-if iteration == 0:
-
-    st.info(
-        "👀 Look carefully! These points are completely random. "
-        "There are no groups yet."
-    )
-
-elif iteration < 3:
-
-    st.info(
-        "🌱 Something is beginning to happen... "
-        "The points are starting to move towards groups."
-    )
-
-elif iteration < 6:
-
-    st.info(
-        "🧩 The groups are becoming easier to recognize."
-    )
-
-elif iteration < TOTAL_ITERATIONS:
-
-    st.info(
-        "🎨 The clusters are becoming clearer. "
-        "Can you predict where the next point might belong?"
-    )
-
-else:
-
-    st.success(
-        "✨ The groups have formed! Now let's introduce a new point."
-    )
-
-
-# ============================================================
-# CLASSIFICATION SECTION
-# ============================================================
-
-if show_query:
-
-    st.divider()
-
-    st.markdown(
-        "## ⭐ Meet the new point"
-    )
-
-    st.write(
-        """
-        A completely new point has appeared.
-
-        It doesn't have a class yet.
-
-        **Can KNN figure out where it belongs?**
-        """
-    )
-
-    col1, col2, col3 = st.columns(3)
-
-    with col1:
-
-        st.metric(
-            "Nearby points considered",
-            K
-        )
-
-    with col2:
-
-        st.metric(
-            "Question",
-            "Where does ★ belong?"
-        )
-
-    with col3:
-
-        st.metric(
-            "KNN's answer",
-            CLASS_NAMES[prediction]
-        )
-
-    st.markdown(
-        f"""
-        <div class="prediction">
-        🔎 KNN thinks the new point belongs to<br><br>
-        {CLASS_NAMES[prediction]}
-        </div>
-        """,
-        unsafe_allow_html=True
-    )
-
-    st.divider()
-
-    st.markdown(
-        "### 🗳️ Why?"
-
-    )
-
-    votes = hidden_labels[
-        nearest_indices
+    current_labels = label_history[
+        iteration - 1
     ]
 
-    vote_counts = np.bincount(
-        votes,
-        minlength=4
-    )
-
-    vote_cols = st.columns(4)
-
-    for i in range(4):
-
-        with vote_cols[i]:
-
-            st.markdown(
-                f"""
-                <div class="step-card">
-
-                <div style="
-                    font-size:22px;
-                    color:{COLORS[i]};
-                    font-weight:700;
-                ">
-                {CLASS_NAMES[i]}
-                </div>
-
-                <div class="big-number">
-                {vote_counts[i]}
-                </div>
-
-                votes
-
-                </div>
-                """,
-                unsafe_allow_html=True
-            )
-
-    st.write(
-        f"""
-        KNN looks at the **{K} closest points**.
-
-        The group with the most nearby points wins.
-
-        In this case:
-
-        **{CLASS_NAMES[prediction]} wins! 🎉**
-        """
-    )
+    current_centroids = centroid_history[
+        iteration
+    ]
 
 
 # ============================================================
-# TEACHING SECTION
+# MAIN CONTENT
+# ============================================================
+
+plot_col, info_col = st.columns(
+    [3.5, 1]
+)
+
+
+# ============================================================
+# MAIN VISUALIZATION
+# ============================================================
+
+with plot_col:
+
+    fig, ax = plt.subplots(
+        figsize=(8.5, 6.0)
+    )
+
+    # --------------------------------------------------------
+    # RANDOM POINT STAGE
+    # --------------------------------------------------------
+
+    if iteration == 0:
+
+        ax.scatter(
+            points[:, 0],
+            points[:, 1],
+            s=65,
+            color="#777777",
+            alpha=0.75,
+            edgecolors="white",
+            linewidths=0.7
+        )
+
+        # Initial centroids
+        ax.scatter(
+            current_centroids[:, 0],
+            current_centroids[:, 1],
+            s=230,
+            marker="X",
+            color="#222222",
+            edgecolors="white",
+            linewidths=1.5,
+            zorder=5
+        )
+
+        ax.set_title(
+            "Random points + initial centroids",
+            fontsize=16,
+            fontweight="bold"
+        )
+
+    # --------------------------------------------------------
+    # K-MEANS ITERATIONS
+    # --------------------------------------------------------
+
+    else:
+
+        for cluster_id in range(
+            n_clusters
+        ):
+
+            mask = (
+                current_labels
+                == cluster_id
+            )
+
+            ax.scatter(
+                points[mask, 0],
+                points[mask, 1],
+                s=65,
+                color=CLUSTER_COLORS[
+                    cluster_id
+                ],
+                alpha=0.78,
+                edgecolors="white",
+                linewidths=0.7,
+                label=CLUSTER_NAMES[
+                    cluster_id
+                ]
+            )
+
+        # ----------------------------------------------------
+        # Show centroid movement trail
+        # ----------------------------------------------------
+
+        if iteration > 1:
+
+            for cluster_id in range(
+                n_clusters
+            ):
+
+                trajectory = np.array(
+                    [
+                        centroid_history[
+                            i
+                        ][cluster_id]
+                        for i in range(
+                            0,
+                            iteration + 1
+                        )
+                    ]
+                )
+
+                ax.plot(
+                    trajectory[:, 0],
+                    trajectory[:, 1],
+                    linestyle="--",
+                    linewidth=1.5,
+                    color=CLUSTER_COLORS[
+                        cluster_id
+                    ],
+                    alpha=0.45
+                )
+
+        # ----------------------------------------------------
+        # Current centroids
+        # ----------------------------------------------------
+
+        for cluster_id in range(
+            n_clusters
+        ):
+
+            centroid = current_centroids[
+                cluster_id
+            ]
+
+            ax.scatter(
+                centroid[0],
+                centroid[1],
+                s=280,
+                marker="X",
+                color=CLUSTER_COLORS[
+                    cluster_id
+                ],
+                edgecolors="black",
+                linewidths=1.5,
+                zorder=10
+            )
+
+            ax.annotate(
+                f"C{cluster_id + 1}",
+                (
+                    centroid[0],
+                    centroid[1]
+                ),
+                xytext=(7, 7),
+                textcoords="offset points",
+                fontsize=10,
+                fontweight="bold"
+            )
+
+        ax.set_title(
+            f"Clusters forming — Iteration {iteration}",
+            fontsize=16,
+            fontweight="bold"
+        )
+
+        ax.legend(
+            loc="upper right",
+            fontsize=9
+        )
+
+    # --------------------------------------------------------
+    # AXES
+    # --------------------------------------------------------
+
+    ax.set_xlim(
+        X_MIN,
+        X_MAX
+    )
+
+    ax.set_ylim(
+        Y_MIN,
+        Y_MAX
+    )
+
+    ax.set_xlabel(
+        "X",
+        fontsize=11
+    )
+
+    ax.set_ylabel(
+        "Y",
+        fontsize=11
+    )
+
+    ax.grid(
+        alpha=0.15
+    )
+
+    st.pyplot(
+        fig,
+        use_container_width=True
+    )
+
+    plt.close(fig)
+
+
+# ============================================================
+# INFORMATION PANEL
+# ============================================================
+
+with info_col:
+
+    st.markdown("### 📌 What's happening?")
+
+    if iteration == 0:
+
+        st.markdown(
+            """
+            **Step 0 — Random**
+
+            All points are random.
+
+            No clusters have been formed yet.
+
+            The **X markers** are the initial
+            centroid positions.
+            """
+        )
+
+    elif iteration == 1:
+
+        st.markdown(
+            """
+            **Step 1 — Assign**
+
+            Each point looks for its
+            nearest centroid.
+
+            Points receive their first
+            colours.
+            """
+        )
+
+    elif iteration < MAX_ITERATIONS:
+
+        st.markdown(
+            f"""
+            **Step {iteration}**
+
+            The points have been assigned
+            to the nearest centroid.
+
+            The centroids then move toward
+            the middle of their groups.
+
+            Watch the **X markers** move!
+            """
+        )
+
+    else:
+
+        st.markdown(
+            """
+            **✨ Final iteration**
+
+            The groups have stabilised.
+
+            Each centroid now sits close to
+            the centre of its cluster.
+            """
+        )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # DATA SUMMARY
+    # --------------------------------------------------------
+
+    st.markdown("### 📊 Experiment")
+
+    st.markdown(
+        f"""
+        **Points:** {n_points}
+
+        **Clusters:** {n_clusters}
+
+        **Iteration:** {iteration} / 20
+        """
+    )
+
+    st.divider()
+
+    # --------------------------------------------------------
+    # COLOUR LEGEND
+    # --------------------------------------------------------
+
+    st.markdown("### 🎨 Groups")
+
+    for i in range(
+        n_clusters
+    ):
+
+        st.markdown(
+            f"""
+            <div style="
+                padding:4px;
+                margin:2px;
+                border-radius:6px;
+                background:{CLUSTER_COLORS[i]};
+                color:white;
+                text-align:center;
+                font-weight:600;
+                font-size:12px;
+            ">
+            {CLUSTER_NAMES[i]}
+            </div>
+            """,
+            unsafe_allow_html=True
+        )
+
+
+# ============================================================
+# BOTTOM EXPLANATION
 # ============================================================
 
 st.divider()
 
-st.markdown(
-    "## 💡 What just happened?"
-)
-
-step1, step2, step3, step4 = st.columns(4)
+step1, step2, step3 = st.columns(3)
 
 with step1:
 
     st.markdown(
         """
-        ### ① Random
+        ### ① Pick starting points
 
-        At the beginning, the points were completely random.
+        K-means first places a number of
+        **centroids** on the canvas.
 
-        No groups.
-        No classes.
+        The number of centroids depends on
+        the number of clusters you choose.
         """
     )
 
@@ -752,9 +949,14 @@ with step2:
 
     st.markdown(
         """
-        ### ② Formation
+        ### ② Find the nearest centroid
 
-        As the iterations progressed, nearby points began forming groups.
+        Every point asks:
+
+        **"Which centroid am I closest to?"**
+
+        Points belonging to the same centroid
+        receive the same colour.
         """
     )
 
@@ -762,62 +964,12 @@ with step3:
 
     st.markdown(
         """
-        ### ③ New point
+        ### ③ Move & repeat
 
-        A new point appeared without a class.
+        Each centroid moves toward the centre
+        of its assigned points.
+
+        This happens again and again until
+        the clusters become stable.
         """
     )
-
-with step4:
-
-    st.markdown(
-        """
-        ### ④ Voting
-
-        KNN looked at nearby points and used majority voting to decide.
-        """
-    )
-
-
-# ============================================================
-# FUN QUESTION
-# ============================================================
-
-if show_query:
-
-    st.divider()
-
-    st.markdown(
-        "### 🤔 Your turn to think"
-    )
-
-    st.write(
-        """
-        Before clicking **Start Again**, look at the clusters.
-
-        If another point appeared near the boundary between two groups,
-        would you be confident about its class?
-
-        **That's where KNN becomes interesting!**
-        """
-    )
-
-
-# ============================================================
-# FOOTER
-# ============================================================
-
-st.divider()
-
-st.markdown(
-    """
-    <div style="
-        text-align:center;
-        color:#888;
-        padding:15px;
-    ">
-        🔎 The KNN Detective · An interactive machine-learning experiment
-    </div>
-    """,
-    unsafe_allow_html=True
-)
