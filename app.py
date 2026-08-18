@@ -2194,30 +2194,35 @@ def initialize_centroids(
         indices
     ].copy()
 
-
 # ============================================================
-# ASSIGN POINTS
+# ASSIGN POINTS TO NEAREST CENTROID
 # ============================================================
 
-def assign_clusters(
-    points,
-    centroids
-):
+def assign_clusters(points, centroids):
 
-    # Standard Euclidean distance
-    distances = np.sqrt(
-        (
-            points[:, np.newaxis, :]
-            -
-            centroids[np.newaxis, :, :]
-        ) ** 2
-        .sum(axis=2)
+    # Difference between every point and every centroid
+    differences = (
+        points[:, np.newaxis, :]
+        - centroids[np.newaxis, :, :]
     )
 
-    return np.argmin(
+    # Squared Euclidean distance
+    squared_distances = (
+        differences ** 2
+    ).sum(axis=2)
+
+    # Euclidean distance
+    distances = np.sqrt(
+        squared_distances
+    )
+
+    # Assign each point to the nearest centroid
+    labels = np.argmin(
         distances,
         axis=1
     )
+
+    return labels
 
 
 # ============================================================
