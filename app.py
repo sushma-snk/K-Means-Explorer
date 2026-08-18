@@ -1,10 +1,7 @@
 import streamlit as st
 import numpy as np
-import matplotlib.pyplot as plt
-
-from streamlit_drawable_canvas import st_canvas
-from PIL import Image
-import io
+import plotly.graph_objects as go
+from plotly.colors import hex_to_rgb
 
 
 # ============================================================
@@ -27,14 +24,12 @@ st.markdown(
     """
     <style>
 
-    /* Remove excessive Streamlit spacing */
     .block-container {
         padding-top: 1rem;
         padding-bottom: 0.5rem;
         max-width: 1500px;
     }
 
-    /* Main title */
     .title {
         text-align: center;
         font-size: 34px;
@@ -49,27 +44,6 @@ st.markdown(
         margin-bottom: 10px;
     }
 
-    /* Cards */
-    .card {
-        padding: 12px;
-        border-radius: 14px;
-        background-color: #f6f6f6;
-        text-align: center;
-        margin-bottom: 8px;
-    }
-
-    .card-title {
-        font-size: 13px;
-        color: #666;
-        margin-bottom: 2px;
-    }
-
-    .card-value {
-        font-size: 24px;
-        font-weight: 700;
-    }
-
-    /* Iteration display */
     .iteration-box {
         text-align: center;
         font-size: 20px;
@@ -79,19 +53,11 @@ st.markdown(
         background-color: #f4f4f4;
     }
 
-    /* Explanation */
-    .explanation {
-        font-size: 14px;
-        line-height: 1.4;
-    }
-
-    /* Buttons */
     div.stButton > button {
         border-radius: 10px;
         font-weight: 600;
     }
 
-    /* Sidebar */
     section[data-testid="stSidebar"] {
         width: 270px !important;
     }
@@ -131,15 +97,13 @@ Y_MAX = 100
 
 MAX_ITERATIONS = 20
 
-
-# Visually distinct colours
 CLUSTER_COLORS = [
-    "#FF6B6B",  # red/coral
-    "#4D96FF",  # blue
-    "#6BCB77",  # green
-    "#B983FF",  # purple
-    "#FFB84C",  # orange
-    "#00B8A9",  # teal
+    "#FF6B6B",
+    "#4D96FF",
+    "#6BCB77",
+    "#B983FF",
+    "#FFB84C",
+    "#00B8A9",
 ]
 
 CLUSTER_NAMES = [
@@ -156,54 +120,24 @@ CLUSTER_NAMES = [
 # SESSION STATE
 # ============================================================
 
-if "points" not in st.session_state:
-    st.session_state.points = None
+defaults = {
+    "points": None,
+    "n_points": 100,
+    "n_clusters": 3,
+    "iteration": 0,
+    "centroid_history": None,
+    "label_history": None,
+    "generated": False,
+    "centroid_mode": "🎲 Random centroids",
+    "manual_centroids": [],
+    "manual_selection_active": False,
+    "plot_key": 0,
+}
 
-if "n_points" not in st.session_state:
-    st.session_state.n_points = 100
+for key, value in defaults.items():
 
-if "n_clusters" not in st.session_state:
-    st.session_state.n_clusters = 3
-
-if "iteration" not in st.session_state:
-    st.session_state.iteration = 0
-
-if "centroid_history" not in st.session_state:
-    st.session_state.centroid_history = None
-
-if "label_history" not in st.session_state:
-    st.session_state.label_history = None
-
-if "generated" not in st.session_state:
-    st.session_state.generated = False
-
-# ------------------------------------------------------------
-# NEW: centroid initialization mode
-# ------------------------------------------------------------
-
-if "centroid_mode" not in st.session_state:
-    st.session_state.centroid_mode = "🎲 Random centroids"
-
-# ------------------------------------------------------------
-# NEW: manually selected centroids
-# ------------------------------------------------------------
-
-if "manual_centroids" not in st.session_state:
-    st.session_state.manual_centroids = []
-
-# ------------------------------------------------------------
-# NEW: whether user is currently selecting centroids
-# ------------------------------------------------------------
-
-if "manual_selection_active" not in st.session_state:
-    st.session_state.manual_selection_active = False
-
-# ------------------------------------------------------------
-# NEW: number of clicks already processed
-# ------------------------------------------------------------
-
-if "processed_clicks" not in st.session_state:
-    st.session_state.processed_clicks = 0
+    if key not in st.session_state:
+        st.session_state[key] = value
 
 
 # ============================================================
@@ -215,9 +149,8 @@ def generate_points(n_points):
     """
     Generate completely random points.
 
-    Important:
-    At iteration 0, ALL points look identical.
-    No cluster information is shown.
+    At iteration 0, all points are identical
+    in appearance and have no class information.
     """
 
     return np.random.uniform(
@@ -231,10 +164,14 @@ def generate_points(n_points):
 # INITIAL CENTROIDS
 # ============================================================
 
-def initialize_centroids(points, n_clusters):
+def initialize_centroids(
+    points,
+    n_clusters
+):
 
     """
-    Select initial centroids randomly from the dataset.
+    Select random points from the dataset
+    as initial centroids.
     """
 
     indices = np.random.choice(
@@ -250,7 +187,16 @@ def initialize_centroids(points, n_clusters):
 # ASSIGN POINTS TO CENTROIDS
 # ============================================================
 
-def assign_clusters(points, centroids):
+def assign_clusters(
+    points,
+    centroids
+):
+
+    """
+    Assign every point to its nearest centroid.
+
+    Euclidean distance is used.
+    """
 
     distances = np.sqrt(
         (
@@ -275,6 +221,11 @@ def update_centroids(
     centroids
 ):
 
+    """
+    Move each centroid to the mean
+    of the points assigned to it.
+    """
+
     new_centroids = centroids.copy()
 
     for cluster_id in range(
@@ -297,7 +248,7 @@ def update_centroids(
 
 
 # ============================================================
-# RUN K-MEANS AND SAVE EVERY ITERATION
+# RUN K-MEANS
 # ============================================================
 
 def run_kmeans(
@@ -308,16 +259,13 @@ def run_kmeans(
 ):
 
     """
-    Run K-means once and store:
+    Run K-means and save every iteration.
 
-        centroid position
-        cluster assignment
+    centroid_history:
+        centroid locations at every step
 
-    for every iteration.
-
-    If initial_centroids is supplied,
-    those are used instead of randomly
-    selecting the initial centroids.
+    label_history:
+        cluster assignment at every step
     """
 
     # --------------------------------------------------------
@@ -352,8 +300,7 @@ def run_kmeans(
         max_iterations
     ):
 
-        # Step 1:
-        # Assign points to nearest centroid
+        # Assign points
         labels = assign_clusters(
             points,
             centroids
@@ -363,8 +310,7 @@ def run_kmeans(
             labels.copy()
         )
 
-        # Step 2:
-        # Move centroid to mean of its points
+        # Move centroids
         new_centroids = update_centroids(
             points,
             labels,
@@ -427,129 +373,645 @@ def create_experiment(
 
     st.session_state.manual_selection_active = False
 
+    st.session_state.plot_key += 1
+
 
 # ============================================================
-# CREATE BACKGROUND IMAGE FOR MANUAL CLICKING
+# COLOR HELPER
 # ============================================================
 
-def create_selection_plot():
+def rgba(
+    hex_color,
+    alpha
+):
+
+    rgb = hex_to_rgb(
+        hex_color
+    )
+
+    return (
+        f"rgba("
+        f"{rgb[0]},"
+        f"{rgb[1]},"
+        f"{rgb[2]},"
+        f"{alpha}"
+        f")"
+    )
+
+
+# ============================================================
+# CREATE CLUSTER REGION
+# ============================================================
+
+def create_cluster_region(
+    centroids,
+    cluster_id,
+    resolution=100
+):
 
     """
-    Create the same visual style as the normal
-    Matplotlib plot, but save it as an image so
-    the drawable canvas can receive clicks.
+    Create a visual Voronoi-like region.
+
+    Each grid location is assigned to the
+    nearest centroid.
+
+    The region is used only for visualization.
     """
 
-    points = st.session_state.points
+    x = np.linspace(
+        X_MIN,
+        X_MAX,
+        resolution
+    )
 
-    fig, ax = plt.subplots(
-        figsize=(8.5, 6.0),
-        dpi=100
+    y = np.linspace(
+        Y_MIN,
+        Y_MAX,
+        resolution
+    )
+
+    xx, yy = np.meshgrid(
+        x,
+        y
+    )
+
+    grid = np.column_stack(
+        (
+            xx.ravel(),
+            yy.ravel()
+        )
+    )
+
+    labels = assign_clusters(
+        grid,
+        centroids
+    )
+
+    labels = labels.reshape(
+        xx.shape
+    )
+
+    mask = (
+        labels == cluster_id
+    )
+
+    z = np.where(
+        mask,
+        1,
+        np.nan
+    )
+
+    return (
+        x,
+        y,
+        z
+    )
+
+
+# ============================================================
+# CREATE MAIN PLOT
+# ============================================================
+
+def create_plot(
+    points,
+    n_clusters,
+    iteration,
+    centroid_history,
+    label_history
+):
+
+    fig = go.Figure()
+
+    # ========================================================
+    # ITERATION 0
+    # ========================================================
+
+    if iteration == 0:
+
+        # ----------------------------------------------------
+        # Random points
+        # ----------------------------------------------------
+
+        fig.add_trace(
+            go.Scatter(
+                x=points[:, 0],
+                y=points[:, 1],
+                mode="markers",
+                marker=dict(
+                    size=9,
+                    color="#777777",
+                    opacity=0.75,
+                    line=dict(
+                        color="white",
+                        width=1
+                    )
+                ),
+                name="Random points",
+                hovertemplate=(
+                    "X: %{x:.1f}<br>"
+                    "Y: %{y:.1f}"
+                    "<extra></extra>"
+                )
+            )
+        )
+
+        # ----------------------------------------------------
+        # Initial centroids
+        # ----------------------------------------------------
+
+        initial_centroids = (
+            centroid_history[0]
+        )
+
+        fig.add_trace(
+            go.Scatter(
+                x=initial_centroids[:, 0],
+                y=initial_centroids[:, 1],
+                mode="markers+text",
+                marker=dict(
+                    size=20,
+                    symbol="x",
+                    color="#222222",
+                    line=dict(
+                        color="white",
+                        width=2
+                    )
+                ),
+                text=[
+                    f"C{i + 1}"
+                    for i in range(
+                        n_clusters
+                    )
+                ],
+                textposition="top right",
+                textfont=dict(
+                    size=12,
+                    color="#222222"
+                ),
+                name="Initial centroids",
+                hovertemplate=(
+                    "Centroid %{text}"
+                    "<br>X: %{x:.1f}"
+                    "<br>Y: %{y:.1f}"
+                    "<extra></extra>"
+                )
+            )
+        )
+
+    # ========================================================
+    # K-MEANS ITERATIONS
+    # ========================================================
+
+    else:
+
+        current_labels = (
+            label_history[
+                iteration - 1
+            ]
+        )
+
+        current_centroids = (
+            centroid_history[
+                iteration
+            ]
+        )
+
+        # ----------------------------------------------------
+        # LIGHT CLUSTER REGIONS
+        # ----------------------------------------------------
+
+        for cluster_id in range(
+            n_clusters
+        ):
+
+            x, y, z = (
+                create_cluster_region(
+                    current_centroids,
+                    cluster_id
+                )
+            )
+
+            fig.add_trace(
+                go.Heatmap(
+                    x=x,
+                    y=y,
+                    z=z,
+                    colorscale=[
+                        [
+                            0,
+                            rgba(
+                                CLUSTER_COLORS[
+                                    cluster_id
+                                ],
+                                0
+                            )
+                        ],
+                        [
+                            1,
+                            rgba(
+                                CLUSTER_COLORS[
+                                    cluster_id
+                                ],
+                                0.10
+                            )
+                        ]
+                    ],
+                    showscale=False,
+                    hoverinfo="skip",
+                    zsmooth=False
+                )
+            )
+
+        # ----------------------------------------------------
+        # CLUSTERED POINTS
+        # ----------------------------------------------------
+
+        for cluster_id in range(
+            n_clusters
+        ):
+
+            mask = (
+                current_labels
+                == cluster_id
+            )
+
+            fig.add_trace(
+                go.Scatter(
+                    x=points[
+                        mask,
+                        0
+                    ],
+                    y=points[
+                        mask,
+                        1
+                    ],
+                    mode="markers",
+                    marker=dict(
+                        size=9,
+                        color=CLUSTER_COLORS[
+                            cluster_id
+                        ],
+                        opacity=0.82,
+                        line=dict(
+                            color="white",
+                            width=1
+                        )
+                    ),
+                    name=CLUSTER_NAMES[
+                        cluster_id
+                    ],
+                    hovertemplate=(
+                        "X: %{x:.1f}<br>"
+                        "Y: %{y:.1f}"
+                        "<extra>"
+                        f"{CLUSTER_NAMES[cluster_id]}"
+                        "</extra>"
+                    )
+                )
+            )
+
+        # ----------------------------------------------------
+        # CENTROID TRAILS
+        # ----------------------------------------------------
+
+        if iteration > 1:
+
+            for cluster_id in range(
+                n_clusters
+            ):
+
+                trajectory = np.array(
+                    [
+                        centroid_history[
+                            i
+                        ][cluster_id]
+                        for i in range(
+                            0,
+                            iteration + 1
+                        )
+                    ]
+                )
+
+                fig.add_trace(
+                    go.Scatter(
+                        x=trajectory[:, 0],
+                        y=trajectory[:, 1],
+                        mode="lines",
+                        line=dict(
+                            color=CLUSTER_COLORS[
+                                cluster_id
+                            ],
+                            width=2,
+                            dash="dash"
+                        ),
+                        opacity=0.45,
+                        showlegend=False,
+                        hoverinfo="skip"
+                    )
+                )
+
+        # ----------------------------------------------------
+        # CURRENT CENTROIDS
+        # ----------------------------------------------------
+
+        fig.add_trace(
+            go.Scatter(
+                x=current_centroids[:, 0],
+                y=current_centroids[:, 1],
+                mode="markers+text",
+                marker=dict(
+                    size=23,
+                    symbol="x",
+                    color=[
+                        CLUSTER_COLORS[i]
+                        for i in range(
+                            n_clusters
+                        )
+                    ],
+                    line=dict(
+                        color="black",
+                        width=2
+                    )
+                ),
+                text=[
+                    f"C{i + 1}"
+                    for i in range(
+                        n_clusters
+                    )
+                ],
+                textposition="top right",
+                textfont=dict(
+                    size=12,
+                    color="black"
+                ),
+                name="Centroids",
+                hovertemplate=(
+                    "Centroid %{text}"
+                    "<br>X: %{x:.1f}"
+                    "<br>Y: %{y:.1f}"
+                    "<extra></extra>"
+                )
+            )
+        )
+
+    # ========================================================
+    # LAYOUT
+    # ========================================================
+
+    if iteration == 0:
+
+        title = (
+            "Random points + initial centroids"
+        )
+
+    else:
+
+        title = (
+            f"Clusters forming — "
+            f"Iteration {iteration}"
+        )
+
+    fig.update_layout(
+
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor="center",
+            font=dict(
+                size=18
+            )
+        ),
+
+        xaxis=dict(
+            title="X",
+            range=[
+                X_MIN,
+                X_MAX
+            ],
+            fixedrange=True,
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.10)",
+            zeroline=False
+        ),
+
+        yaxis=dict(
+            title="Y",
+            range=[
+                Y_MIN,
+                Y_MAX
+            ],
+            fixedrange=True,
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.10)",
+            zeroline=False,
+            scaleanchor="x",
+            scaleratio=1
+        ),
+
+        height=570,
+
+        margin=dict(
+            l=45,
+            r=25,
+            t=60,
+            b=45
+        ),
+
+        legend=dict(
+            orientation="h",
+            yanchor="bottom",
+            y=1.01,
+            xanchor="right",
+            x=1
+        ),
+
+        plot_bgcolor="white",
+
+        paper_bgcolor="white",
+
+        hovermode="closest"
+    )
+
+    return fig
+
+
+# ============================================================
+# CREATE MANUAL-CENTROID PLOT
+# ============================================================
+
+def create_manual_selection_plot():
+
+    """
+    Interactive Plotly plot used only when the
+    student is placing centroids manually.
+    """
+
+    points = (
+        st.session_state.points
+    )
+
+    fig = go.Figure()
+
+    # --------------------------------------------------------
+    # Random points
+    # --------------------------------------------------------
+
+    fig.add_trace(
+        go.Scatter(
+            x=points[:, 0],
+            y=points[:, 1],
+            mode="markers",
+            marker=dict(
+                size=9,
+                color="#777777",
+                opacity=0.75,
+                line=dict(
+                    color="white",
+                    width=1
+                )
+            ),
+            name="Random points",
+            hovertemplate=(
+                "X: %{x:.1f}<br>"
+                "Y: %{y:.1f}"
+                "<extra></extra>"
+            )
+        )
     )
 
     # --------------------------------------------------------
-    # RANDOM POINTS
-    # --------------------------------------------------------
-
-    ax.scatter(
-        points[:, 0],
-        points[:, 1],
-        s=65,
-        color="#777777",
-        alpha=0.75,
-        edgecolors="white",
-        linewidths=0.7
-    )
-
-    # --------------------------------------------------------
-    # ALREADY SELECTED CENTROIDS
+    # Already selected centroids
     # --------------------------------------------------------
 
     selected = (
         st.session_state.manual_centroids
     )
 
-    for i, centroid in enumerate(selected):
+    if len(selected) > 0:
 
-        ax.scatter(
-            centroid[0],
-            centroid[1],
-            s=280,
-            marker="X",
-            color=CLUSTER_COLORS[i],
-            edgecolors="black",
-            linewidths=1.5,
-            zorder=10
+        selected = np.array(
+            selected
         )
 
-        ax.annotate(
-            f"C{i + 1}",
-            (
-                centroid[0],
-                centroid[1]
-            ),
-            xytext=(7, 7),
-            textcoords="offset points",
-            fontsize=10,
-            fontweight="bold"
+        fig.add_trace(
+            go.Scatter(
+                x=selected[:, 0],
+                y=selected[:, 1],
+                mode="markers+text",
+                marker=dict(
+                    size=24,
+                    symbol="x",
+                    color=[
+                        CLUSTER_COLORS[i]
+                        for i in range(
+                            len(selected)
+                        )
+                    ],
+                    line=dict(
+                        color="black",
+                        width=2
+                    )
+                ),
+                text=[
+                    f"C{i + 1}"
+                    for i in range(
+                        len(selected)
+                    )
+                ],
+                textposition="top right",
+                textfont=dict(
+                    size=12,
+                    color="black"
+                ),
+                name="Selected centroids",
+                hovertemplate=(
+                    "Centroid %{text}"
+                    "<br>X: %{x:.1f}"
+                    "<br>Y: %{y:.1f}"
+                    "<extra></extra>"
+                )
+            )
         )
 
     # --------------------------------------------------------
-    # AXES
+    # Layout
     # --------------------------------------------------------
 
-    ax.set_xlim(
-        X_MIN,
-        X_MAX
+    remaining = (
+        st.session_state.n_clusters
+        - len(selected)
     )
 
-    ax.set_ylim(
-        Y_MIN,
-        Y_MAX
+    if remaining > 0:
+
+        title = (
+            f"👆 Click to place "
+            f"centroid "
+            f"{len(selected) + 1} "
+            f"of "
+            f"{st.session_state.n_clusters}"
+        )
+
+    else:
+
+        title = (
+            "All starting centroids selected"
+        )
+
+    fig.update_layout(
+
+        title=dict(
+            text=title,
+            x=0.5,
+            xanchor="center",
+            font=dict(
+                size=18
+            )
+        ),
+
+        xaxis=dict(
+            title="X",
+            range=[
+                X_MIN,
+                X_MAX
+            ],
+            fixedrange=True,
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.10)",
+            zeroline=False
+        ),
+
+        yaxis=dict(
+            title="Y",
+            range=[
+                Y_MIN,
+                Y_MAX
+            ],
+            fixedrange=True,
+            showgrid=True,
+            gridcolor="rgba(0,0,0,0.10)",
+            zeroline=False,
+            scaleanchor="x",
+            scaleratio=1
+        ),
+
+        height=570,
+
+        margin=dict(
+            l=45,
+            r=25,
+            t=60,
+            b=45
+        ),
+
+        plot_bgcolor="white",
+
+        paper_bgcolor="white",
+
+        hovermode="closest"
     )
 
-    ax.set_xlabel(
-        "X",
-        fontsize=11
-    )
-
-    ax.set_ylabel(
-        "Y",
-        fontsize=11
-    )
-
-    ax.grid(
-        alpha=0.15
-    )
-
-    ax.set_title(
-        f"👆 Click to place centroid "
-        f"{len(selected) + 1} of "
-        f"{st.session_state.n_clusters}",
-        fontsize=16,
-        fontweight="bold"
-    )
-
-    fig.tight_layout()
-
-    # --------------------------------------------------------
-    # SAVE FIGURE TO MEMORY
-    # --------------------------------------------------------
-
-    buffer = io.BytesIO()
-
-    fig.savefig(
-        buffer,
-        format="png",
-        dpi=100,
-        bbox_inches="tight"
-    )
-
-    plt.close(fig)
-
-    buffer.seek(0)
-
-    return Image.open(buffer)
+    return fig
 
 
 # ============================================================
@@ -570,9 +1032,11 @@ with st.sidebar:
     # NUMBER OF POINTS
     # --------------------------------------------------------
 
-    st.markdown("### 🔵 Data points")
+    st.markdown(
+        "### 🔵 Data points"
+    )
 
-    n_points = st.number_input(
+    n_points_input = st.number_input(
         "Enter number of points",
         min_value=20,
         max_value=300,
@@ -584,20 +1048,23 @@ with st.sidebar:
         "Or use the slider",
         min_value=20,
         max_value=300,
-        value=int(n_points),
+        value=int(
+            n_points_input
+        ),
         step=10
     )
 
-    # Use slider value
     n_points = n_points_slider
 
     # --------------------------------------------------------
     # NUMBER OF CLUSTERS
     # --------------------------------------------------------
 
-    st.markdown("### 🎨 Number of clusters")
+    st.markdown(
+        "### 🎨 Number of clusters"
+    )
 
-    n_clusters = st.number_input(
+    n_clusters_input = st.number_input(
         "Enter number of clusters",
         min_value=2,
         max_value=6,
@@ -609,7 +1076,9 @@ with st.sidebar:
         "Or use the slider",
         min_value=2,
         max_value=6,
-        value=int(n_clusters),
+        value=int(
+            n_clusters_input
+        ),
         step=1
     )
 
@@ -617,11 +1086,13 @@ with st.sidebar:
 
     st.divider()
 
-    # ========================================================
-    # NEW: CENTROID INITIALIZATION
-    # ========================================================
+    # --------------------------------------------------------
+    # CENTROID INITIALIZATION
+    # --------------------------------------------------------
 
-    st.markdown("### 📍 Starting centroids")
+    st.markdown(
+        "### 📍 Starting centroids"
+    )
 
     centroid_mode = st.radio(
         "How should centroids be placed?",
@@ -652,26 +1123,15 @@ with st.sidebar:
         use_container_width=True
     ):
 
-        # ----------------------------------------------------
-        # RANDOM CENTROIDS
-        # ----------------------------------------------------
-
-        if centroid_mode == "🎲 Random centroids":
+        if (
+            centroid_mode
+            == "🎲 Random centroids"
+        ):
 
             create_experiment(
                 n_points,
                 n_clusters
             )
-
-            st.session_state.manual_centroids = []
-
-            st.session_state.processed_clicks = 0
-
-            st.rerun()
-
-        # ----------------------------------------------------
-        # MANUAL CENTROIDS
-        # ----------------------------------------------------
 
         else:
 
@@ -690,21 +1150,18 @@ with st.sidebar:
                 n_clusters
             )
 
-            # Clear old selections
             st.session_state.manual_centroids = []
 
-            # Activate manual mode
             st.session_state.manual_selection_active = True
 
             st.session_state.generated = False
 
-            # Reset click tracking
-            st.session_state.processed_clicks = 0
+            st.session_state.plot_key += 1
 
-            st.rerun()
+        st.rerun()
 
     # --------------------------------------------------------
-    # RESET
+    # NEW EXPERIMENT
     # --------------------------------------------------------
 
     if st.button(
@@ -712,16 +1169,15 @@ with st.sidebar:
         use_container_width=True
     ):
 
-        if centroid_mode == "🎲 Random centroids":
+        if (
+            centroid_mode
+            == "🎲 Random centroids"
+        ):
 
             create_experiment(
                 n_points,
                 n_clusters
             )
-
-            st.session_state.manual_centroids = []
-
-            st.session_state.processed_clicks = 0
 
         else:
 
@@ -745,23 +1201,28 @@ with st.sidebar:
 
             st.session_state.generated = False
 
-            st.session_state.processed_clicks = 0
+            st.session_state.plot_key += 1
 
         st.rerun()
 
     st.divider()
 
-    st.markdown("### 💡 Try this")
+    st.markdown(
+        "### 💡 Try this"
+    )
 
-    if centroid_mode == "🎲 Random centroids":
+    if (
+        centroid_mode
+        == "🎲 Random centroids"
+    ):
 
         st.caption(
             """
-            Change the number of points and clusters,
-            then watch how the centroids move.
+            Change the number of points
+            and clusters.
 
-            Can you guess where the final clusters
-            will form before reaching iteration 20?
+            Watch how the centroids move
+            and how the groups form.
             """
         )
 
@@ -769,11 +1230,12 @@ with st.sidebar:
 
         st.caption(
             """
-            Choose where you think the starting
-            centroids should be.
+            Choose where you think the
+            starting centroids should be.
 
-            If you select 3 clusters, click
-            exactly 3 locations on the plot.
+            If you select 3 clusters,
+            click exactly 3 locations
+            on the plot.
             """
         )
 
@@ -782,28 +1244,25 @@ with st.sidebar:
 # FIRST RUN
 # ============================================================
 
-if not st.session_state.generated:
+if (
+    not st.session_state.generated
+    and
+    not st.session_state.manual_selection_active
+):
 
-    # Only automatically create a random experiment
-    # if manual selection is NOT active.
-
-    if not st.session_state.manual_selection_active:
-
-        create_experiment(
-            st.session_state.n_points,
-            st.session_state.n_clusters
-        )
+    create_experiment(
+        st.session_state.n_points,
+        st.session_state.n_clusters
+    )
 
 
 # ============================================================
-# MANUAL CENTROID SELECTION
+# MANUAL CENTROID PLACEMENT
 # ============================================================
 
-if st.session_state.manual_selection_active:
-
-    # --------------------------------------------------------
-    # INFORMATION MESSAGE
-    # --------------------------------------------------------
+if (
+    st.session_state.manual_selection_active
+):
 
     selected_count = len(
         st.session_state.manual_centroids
@@ -813,223 +1272,203 @@ if st.session_state.manual_selection_active:
         st.session_state.n_clusters
     )
 
+    # --------------------------------------------------------
+    # STATUS
+    # --------------------------------------------------------
+
     st.markdown(
-        f"""
-        <div class="iteration-box">
-        👆 Place centroid
-        {selected_count + 1}
-        of
-        {required_count}
-        </div>
-        """,
+        '<div class="iteration-box">'
+        f'📍 Select starting centroids: '
+        f'{selected_count} / '
+        f'{required_count}'
+        '</div>',
         unsafe_allow_html=True
     )
 
-    st.info(
-        f"""
-        Click on the plot to place the starting
-        centroids.
+    if selected_count < required_count:
 
-        You have selected **{selected_count}**
-        of **{required_count}** centroids.
-        """
-    )
+        st.info(
+            f"""
+            **Click anywhere on the plot to place
+            centroid C{selected_count + 1}.**
 
-    # --------------------------------------------------------
-    # CREATE IMAGE
-    # --------------------------------------------------------
-
-    background_image = (
-        create_selection_plot()
-    )
-
-    # --------------------------------------------------------
-    # CANVAS SIZE
-    # --------------------------------------------------------
-
-    CANVAS_WIDTH = 850
-    CANVAS_HEIGHT = 600
-
-    # Resize background to canvas size
-    background_image = background_image.resize(
-        (
-            CANVAS_WIDTH,
-            CANVAS_HEIGHT
+            You need to place
+            **{required_count - selected_count}**
+            more centroid(s).
+            """
         )
+
+    # --------------------------------------------------------
+    # PLOT
+    # --------------------------------------------------------
+
+    manual_fig = (
+        create_manual_selection_plot()
+    )
+
+    event = st.plotly_chart(
+        manual_fig,
+        use_container_width=True,
+        key=(
+            f"manual_plot_"
+            f"{st.session_state.plot_key}"
+        ),
+        on_select="rerun",
+        selection_mode="points"
     )
 
     # --------------------------------------------------------
-    # CLICKABLE CANVAS
+    # READ PLOTLY CLICK
     # --------------------------------------------------------
 
-    canvas_result = st_canvas(
-        fill_color="rgba(255,255,255,0)",
-        stroke_width=1,
-        stroke_color="rgba(255,255,255,0)",
-        background_image=background_image,
-        update_streamlit=True,
-        height=CANVAS_HEIGHT,
-        width=CANVAS_WIDTH,
-        drawing_mode="point",
-        point_display_radius=8,
-        display_toolbar=False,
-        key="centroid_canvas"
-    )
+    if event is not None:
 
-    # --------------------------------------------------------
-    # READ CLICKED POINTS
-    # --------------------------------------------------------
+        selection = getattr(
+            event,
+            "selection",
+            None
+        )
 
-    if (
-        canvas_result.json_data is not None
-    ):
+        if selection is not None:
 
-        objects = (
-            canvas_result
-            .json_data
-            .get(
-                "objects",
+            points_selected = getattr(
+                selection,
+                "points",
                 []
             )
-        )
 
-        # Process only NEW clicks
-        if len(objects) > (
-            st.session_state.processed_clicks
-        ):
+            if (
+                points_selected
+                and
+                selected_count
+                < required_count
+            ):
 
-            latest_object = objects[-1]
-
-            canvas_x = (
-                latest_object.get(
-                    "left",
-                    0
+                clicked = (
+                    points_selected[-1]
                 )
-            )
 
-            canvas_y = (
-                latest_object.get(
-                    "top",
-                    0
+                # ------------------------------------------------
+                # Plotly event normally gives x/y
+                # for a clicked data point.
+                #
+                # Because the random points are themselves
+                # clickable, we use the nearest clicked
+                # coordinate as the centroid position.
+                # ------------------------------------------------
+
+                clicked_x = clicked.get(
+                    "x"
                 )
-            )
 
-            # ------------------------------------------------
-            # Convert canvas coordinates
-            # to X/Y coordinates 0-100
-            # ------------------------------------------------
-
-            # Canvas is 850 x 600
-            #
-            # X:
-            # 0 -> 0
-            # 850 -> 100
-            #
-            # Y:
-            # 0 -> 100
-            # 600 -> 0
-
-            plot_x = (
-                canvas_x
-                / CANVAS_WIDTH
-                * (X_MAX - X_MIN)
-                + X_MIN
-            )
-
-            plot_y = (
-                1
-                - (
-                    canvas_y
-                    / CANVAS_HEIGHT
+                clicked_y = clicked.get(
+                    "y"
                 )
-            ) * (
-                Y_MAX - Y_MIN
-            ) + Y_MIN
 
-            # Keep inside plotting area
-            plot_x = np.clip(
-                plot_x,
-                X_MIN,
-                X_MAX
-            )
+                if (
+                    clicked_x is not None
+                    and
+                    clicked_y is not None
+                ):
 
-            plot_y = np.clip(
-                plot_y,
-                Y_MIN,
-                Y_MAX
-            )
+                    # ------------------------------------------------
+                    # IMPORTANT:
+                    # The student can click anywhere on the plot.
+                    #
+                    # Plotly selection is based on the nearest
+                    # visible point. To make the centroid truly
+                    # correspond to the selected location, use
+                    # the clicked point coordinates.
+                    # ------------------------------------------------
 
-            # ------------------------------------------------
-            # Add centroid
-            # ------------------------------------------------
-
-            if len(
-                st.session_state.manual_centroids
-            ) < required_count:
-
-                st.session_state.manual_centroids.append(
-                    [
-                        float(plot_x),
-                        float(plot_y)
+                    new_centroid = [
+                        float(clicked_x),
+                        float(clicked_y)
                     ]
-                )
 
-            st.session_state.processed_clicks = (
-                len(objects)
-            )
+                    # Avoid exact duplicate centroid locations
+                    duplicate = False
 
-            # ------------------------------------------------
-            # ALL CENTROIDS SELECTED
-            # ------------------------------------------------
+                    for old_centroid in (
+                        st.session_state.manual_centroids
+                    ):
 
-            if len(
-                st.session_state.manual_centroids
-            ) == required_count:
+                        distance = np.linalg.norm(
+                            np.array(
+                                new_centroid
+                            )
+                            -
+                            np.array(
+                                old_centroid
+                            )
+                        )
 
-                create_experiment(
-                    n_points,
-                    n_clusters,
-                    st.session_state.manual_centroids
-                )
+                        if distance < 1:
 
-                st.session_state.manual_selection_active = (
-                    False
-                )
+                            duplicate = True
 
-                st.session_state.processed_clicks = 0
+                            break
 
-            st.rerun()
+                    if not duplicate:
+
+                        st.session_state.manual_centroids.append(
+                            new_centroid
+                        )
+
+                        # ------------------------------------------------
+                        # ALL CENTROIDS SELECTED
+                        # ------------------------------------------------
+
+                        if (
+                            len(
+                                st.session_state.manual_centroids
+                            )
+                            ==
+                            required_count
+                        ):
+
+                            create_experiment(
+                                n_points,
+                                n_clusters,
+                                st.session_state.manual_centroids
+                            )
+
+                            st.session_state.manual_selection_active = (
+                                False
+                            )
+
+                            st.rerun()
+
+                        else:
+
+                            st.session_state.plot_key += 1
+
+                            st.rerun()
 
     # --------------------------------------------------------
-    # SHOW SELECTED CENTROIDS
+    # SELECTED CENTROIDS
     # --------------------------------------------------------
 
     if selected_count > 0:
 
         st.markdown(
-            "### 📍 Selected starting centroids"
+            "### 📍 Selected centroids"
         )
 
-        centroid_cols = st.columns(
-            min(
-                selected_count,
-                6
-            )
+        cols = st.columns(
+            selected_count
         )
 
         for i, centroid in enumerate(
             st.session_state.manual_centroids
         ):
 
-            with centroid_cols[
-                i % len(centroid_cols)
-            ]:
+            with cols[i]:
 
                 st.markdown(
                     f"""
                     <div style="
                         padding:7px;
-                        margin:2px;
                         border-radius:8px;
                         background:{CLUSTER_COLORS[i]};
                         color:white;
@@ -1046,8 +1485,6 @@ if st.session_state.manual_selection_active:
                     unsafe_allow_html=True
                 )
 
-    # Stop here so the normal
-    # iteration visualization doesn't appear
     st.stop()
 
 
@@ -1078,7 +1515,8 @@ label_history = (
 
 st.markdown(
     '<div class="iteration-box">'
-    f'ITERATION {iteration} / {MAX_ITERATIONS}'
+    f'ITERATION {iteration} / '
+    f'{MAX_ITERATIONS}'
     '</div>',
     unsafe_allow_html=True
 )
@@ -1108,7 +1546,7 @@ with control1:
 
 
 # ============================================================
-# SLIDER
+# ITERATION SLIDER
 # ============================================================
 
 with control2:
@@ -1122,7 +1560,10 @@ with control2:
         label_visibility="collapsed"
     )
 
-    if selected_iteration != iteration:
+    if (
+        selected_iteration
+        != iteration
+    ):
 
         st.session_state.iteration = (
             selected_iteration
@@ -1150,7 +1591,9 @@ with control3:
         st.rerun()
 
 
-iteration = st.session_state.iteration
+iteration = (
+    st.session_state.iteration
+)
 
 
 # ============================================================
@@ -1159,20 +1602,25 @@ iteration = st.session_state.iteration
 
 if iteration == 0:
 
-    # No classes yet
     current_labels = None
 
-    current_centroids = centroid_history[0]
+    current_centroids = (
+        centroid_history[0]
+    )
 
 else:
 
-    current_labels = label_history[
-        iteration - 1
-    ]
+    current_labels = (
+        label_history[
+            iteration - 1
+        ]
+    )
 
-    current_centroids = centroid_history[
-        iteration
-    ]
+    current_centroids = (
+        centroid_history[
+            iteration
+        ]
+    )
 
 
 # ============================================================
@@ -1190,265 +1638,21 @@ plot_col, info_col = st.columns(
 
 with plot_col:
 
-    fig, ax = plt.subplots(
-        figsize=(8.5, 6.0)
+    fig = create_plot(
+        points,
+        n_clusters,
+        iteration,
+        centroid_history,
+        label_history
     )
 
-    # ========================================================
-    # RANDOM POINT STAGE
-    # ========================================================
-
-    if iteration == 0:
-
-        ax.scatter(
-            points[:, 0],
-            points[:, 1],
-            s=65,
-            color="#777777",
-            alpha=0.75,
-            edgecolors="white",
-            linewidths=0.7
-        )
-
-        # Initial centroids
-        ax.scatter(
-            current_centroids[:, 0],
-            current_centroids[:, 1],
-            s=230,
-            marker="X",
-            color="#222222",
-            edgecolors="white",
-            linewidths=1.5,
-            zorder=5
-        )
-
-        ax.set_title(
-            "Random points + initial centroids",
-            fontsize=16,
-            fontweight="bold"
-        )
-
-    # ========================================================
-    # K-MEANS ITERATIONS
-    # ========================================================
-
-    else:
-
-        # ----------------------------------------------------
-        # NEW:
-        # CREATE COLOUR REGIONS
-        # ----------------------------------------------------
-
-        # Create a fine grid over the fixed X-Y space
-        grid_x = np.linspace(
-            X_MIN,
-            X_MAX,
-            180
-        )
-
-        grid_y = np.linspace(
-            Y_MIN,
-            Y_MAX,
-            180
-        )
-
-        xx, yy = np.meshgrid(
-            grid_x,
-            grid_y
-        )
-
-        grid_points = np.column_stack(
-            (
-                xx.ravel(),
-                yy.ravel()
-            )
-        )
-
-        # Determine which centroid owns
-        # each region of the space
-        grid_labels = assign_clusters(
-            grid_points,
-            current_centroids
-        )
-
-        grid_labels = grid_labels.reshape(
-            xx.shape
-        )
-
-        # ----------------------------------------------------
-        # Draw each cluster region
-        # ----------------------------------------------------
-
-        for cluster_id in range(
-            n_clusters
-        ):
-
-            region = (
-                grid_labels
-                == cluster_id
-            )
-
-            # Very light version of the
-            # actual cluster colour
-            ax.contourf(
-                xx,
-                yy,
-                region.astype(float),
-                levels=[
-                    0.5,
-                    1.5
-                ],
-                colors=[
-                    CLUSTER_COLORS[
-                        cluster_id
-                    ]
-                ],
-                alpha=0.10
-            )
-
-        # ----------------------------------------------------
-        # COLOURED DATA POINTS
-        # ----------------------------------------------------
-
-        for cluster_id in range(
-            n_clusters
-        ):
-
-            mask = (
-                current_labels
-                == cluster_id
-            )
-
-            ax.scatter(
-                points[mask, 0],
-                points[mask, 1],
-                s=65,
-                color=CLUSTER_COLORS[
-                    cluster_id
-                ],
-                alpha=0.78,
-                edgecolors="white",
-                linewidths=0.7,
-                label=CLUSTER_NAMES[
-                    cluster_id
-                ]
-            )
-
-        # ----------------------------------------------------
-        # SHOW CENTROID MOVEMENT TRAIL
-        # ----------------------------------------------------
-
-        if iteration > 1:
-
-            for cluster_id in range(
-                n_clusters
-            ):
-
-                trajectory = np.array(
-                    [
-                        centroid_history[
-                            i
-                        ][cluster_id]
-                        for i in range(
-                            0,
-                            iteration + 1
-                        )
-                    ]
-                )
-
-                ax.plot(
-                    trajectory[:, 0],
-                    trajectory[:, 1],
-                    linestyle="--",
-                    linewidth=1.5,
-                    color=CLUSTER_COLORS[
-                        cluster_id
-                    ],
-                    alpha=0.45
-                )
-
-        # ----------------------------------------------------
-        # CURRENT CENTROIDS
-        # ----------------------------------------------------
-
-        for cluster_id in range(
-            n_clusters
-        ):
-
-            centroid = current_centroids[
-                cluster_id
-            ]
-
-            ax.scatter(
-                centroid[0],
-                centroid[1],
-                s=280,
-                marker="X",
-                color=CLUSTER_COLORS[
-                    cluster_id
-                ],
-                edgecolors="black",
-                linewidths=1.5,
-                zorder=10
-            )
-
-            ax.annotate(
-                f"C{cluster_id + 1}",
-                (
-                    centroid[0],
-                    centroid[1]
-                ),
-                xytext=(7, 7),
-                textcoords="offset points",
-                fontsize=10,
-                fontweight="bold"
-            )
-
-        ax.set_title(
-            f"Clusters forming — Iteration {iteration}",
-            fontsize=16,
-            fontweight="bold"
-        )
-
-        ax.legend(
-            loc="upper right",
-            fontsize=9
-        )
-
-    # ========================================================
-    # AXES
-    # ========================================================
-
-    ax.set_xlim(
-        X_MIN,
-        X_MAX
-    )
-
-    ax.set_ylim(
-        Y_MIN,
-        Y_MAX
-    )
-
-    ax.set_xlabel(
-        "X",
-        fontsize=11
-    )
-
-    ax.set_ylabel(
-        "Y",
-        fontsize=11
-    )
-
-    ax.grid(
-        alpha=0.15
-    )
-
-    st.pyplot(
+    st.plotly_chart(
         fig,
-        use_container_width=True
+        use_container_width=True,
+        config={
+            "displayModeBar": False
+        }
     )
-
-    plt.close(fig)
 
 
 # ============================================================
@@ -1463,18 +1667,40 @@ with info_col:
 
     if iteration == 0:
 
-        st.markdown(
-            """
-            **Step 0 — Random**
+        if (
+            st.session_state.centroid_mode
+            == "👆 Place centroids myself"
+        ):
 
-            All points are random.
+            st.markdown(
+                """
+                **Step 0 — Starting positions**
 
-            No clusters have been formed yet.
+                The points are still random.
 
-            The **X markers** are the initial
-            centroid positions.
-            """
-        )
+                The **X markers** show the
+                starting centroid positions
+                you selected.
+
+                No cluster colours have been
+                assigned yet.
+                """
+            )
+
+        else:
+
+            st.markdown(
+                """
+                **Step 0 — Random**
+
+                All points are random.
+
+                No clusters have been formed yet.
+
+                The **X markers** are the initial
+                centroid positions.
+                """
+            )
 
     elif iteration == 1:
 
@@ -1487,6 +1713,9 @@ with info_col:
 
             Points receive their first
             colours.
+
+            The light background shows the
+            region belonging to each centroid.
             """
         )
 
@@ -1502,7 +1731,8 @@ with info_col:
             The centroids then move toward
             the middle of their groups.
 
-            Watch the **X markers** move!
+            Watch the **X markers** and
+            coloured regions move!
             """
         )
 
@@ -1591,8 +1821,9 @@ with step1:
         K-means first places a number of
         **centroids** on the canvas.
 
-        The number of centroids depends on
-        the number of clusters you choose.
+        You can either let the computer
+        choose them randomly or place
+        them yourself.
         """
     )
 
@@ -1620,7 +1851,7 @@ with step3:
         Each centroid moves toward the centre
         of its assigned points.
 
-        This happens again and again until
-        the clusters become stable.
+        The coloured regions also change as
+        the centroids move.
         """
     )
